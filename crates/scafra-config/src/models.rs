@@ -124,10 +124,18 @@ impl Config for ScafraConfig {
                 message: "must be greater than zero when configured".to_owned(),
             });
         }
-        if self.actuator.security.enabled && self.actuator.security.bearer_token.is_none() {
+        if self.actuator.security.enabled
+            && self
+                .actuator
+                .security
+                .bearer_token
+                .as_deref()
+                .is_none_or(|token| token.trim().is_empty())
+        {
             return Err(ValidationError {
                 field: "actuator.security.bearer_token",
-                message: "must be configured when actuator security is enabled".to_owned(),
+                message: "must be a non-blank bearer token when actuator security is enabled"
+                    .to_owned(),
             });
         }
         if self.security.validate().is_err() {
