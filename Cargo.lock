@@ -1096,8 +1096,12 @@ dependencies = [
  "inventory",
  "scafra-config",
  "scafra-core",
+ "scafra-security",
+ "serde",
  "serde_json",
+ "serde_yaml",
  "tokio",
+ "tower",
  "tracing",
 ]
 

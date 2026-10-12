@@ -11,7 +11,13 @@ description = "Optional local Scafra operations dashboard"
 axum.workspace = true
 scafra-config.workspace = true
 scafra-core.workspace = true
+scafra-security.workspace = true
 inventory.workspace = true
-serde_json.workspace = true
+serde.workspace = true
 tokio.workspace = true
 tracing.workspace = true
+
+[dev-dependencies]
+serde_json.workspace = true
+serde_yaml.workspace = true
+tower.workspace = true

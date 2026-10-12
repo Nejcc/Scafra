@@ -296,7 +296,8 @@ with the service type and function name; arguments and `self` are excluded by
 default so logging does not accidentally require `Debug` or expose values.
 
 The optional `scafra-bootui` dependency uses this configuration. It is disabled
-and local-only by default:
+and local-only by default. `bootui.host` must be an IPv4 or IPv6 address
+literal; the default is the IPv4 loopback address:
 
 ~~~yaml
 bootui:
@@ -312,6 +313,40 @@ The dashboard is added explicitly by the application:
 ~~~rust
 let router = scafra_bootui::layer(router, &config.bootui);
 ~~~
+
+`scafra_bootui::layer(router, &config.bootui)` remains available for existing
+applications. It loads the rest of the application configuration once when
+the router is composed. The checked `try_layer_with_config` API is preferred
+when configuration comes from a custom source because it returns policy errors
+to the caller. If that compatibility wrapper cannot load application settings,
+it warns and uses the default server link settings; use the checked API to
+avoid that fallback.
+
+BootUI's `/api/config` response is an allow-listed dashboard snapshot containing
+only `server.host` and `server.port`, which the dashboard uses for actuator
+links. It does not serialize the application configuration. Security settings
+and credentials—including bearer tokens, Basic passwords, JWT/HMAC secrets,
+client secrets, and signing keys—are excluded, as are fields not explicitly
+added to the snapshot type. The dashboard still displays the returned server
+address and port; applications that previously consumed the full configuration
+JSON from this endpoint must migrate to this two-field shape.
+
+With `local_only: true`, BootUI accepts only loopback bind addresses, including
+`127.0.0.1` and `::1`. A non-loopback address such as `0.0.0.0`, `::`, or a
+private/public interface causes standalone startup to fail before a listener
+is created, and the embedded router API returns a policy error. Embedded
+routes also reject non-loopback peers; custom Axum servers must provide
+`ConnectInfo<SocketAddr>` for these routes to work. Scafra's server adapter
+provides it automatically.
+
+With `local_only: false`, BootUI requires `security.enabled: true` and valid
+Scafra credentials. BootUI applies authentication to every dashboard route,
+even if `security.permit_all` names one of those routes. Without valid
+authentication, standalone startup fails before binding and the checked
+embedded API returns an error. Scafra does not terminate TLS: bind to a trusted
+interface, restrict direct access with a firewall, and put the dashboard behind
+a trusted HTTPS terminator before allowing network access. Do not expose
+BootUI publicly without those protections.
 
 When using Scafra's standard runner, add `use scafra_bootui as _;` to the
 application entrypoint so the optional dependency is linked and appears in the
