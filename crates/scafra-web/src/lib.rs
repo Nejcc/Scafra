@@ -23,12 +23,16 @@ pub use errors::{AppError, ServerError, WebError};
 pub use json::JsonBody;
 pub use registration::{ControllerPrefix, ControllerRegistration, ControllerRoutes, RouteMetadata};
 pub use routing::{
-    build_router, build_router_with_actuator, build_router_with_actuator_and_security,
-    default_controller_metadata, finish_router, join_paths, register_default_controllers,
-    validate_routes,
+    build_router, build_router_with_actuator, build_router_with_actuator_and_health_registry,
+    build_router_with_actuator_and_health_registry_and_security,
+    build_router_with_actuator_and_security, default_controller_metadata, finish_router,
+    join_paths, register_default_controllers, validate_routes,
 };
 pub use scafra_actuator::register_health_check;
-pub use scafra_actuator::{ActuatorConfig, ActuatorSecurity, EndpointSelection, HealthConfig};
+pub use scafra_actuator::{
+    ActuatorConfig, ActuatorSecurity, EndpointSelection, HealthCheckFuture,
+    HealthCheckRegistration, HealthConfig, HealthRegistry, HealthRegistryError,
+};
 pub use scafra_security::{
     AuthorizationMode, AuthorizationPolicy, BasicAuthConfig, ControllerAuthorizationRegistration,
     JwtConfig, RouteAuthorizationMetadata, SecurityConfig,

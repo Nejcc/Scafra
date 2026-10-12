@@ -4,7 +4,10 @@ use std::io::IsTerminal;
 
 pub use scafra_actuator as actuator;
 pub use scafra_actuator::register_health_check;
-pub use scafra_actuator::{ActuatorConfig, ActuatorSecurity, EndpointSelection, HealthConfig};
+pub use scafra_actuator::{
+    ActuatorConfig, ActuatorSecurity, EndpointSelection, HealthConfig, HealthRegistry,
+    HealthRegistryError,
+};
 pub use scafra_config as config;
 pub use scafra_config::{
     BootUiConfig, Config, ConfigError, ConfigLoader, ConfigProperties, LoggingConfig, Properties,
@@ -31,12 +34,13 @@ pub use scafra_core::{
     GraphPhase, GraphPlan, ProviderFailure, ScafraError,
 };
 pub use scafra_web::{
-    build_router, join_paths, run_on, run_on_with_log_level, serve_on, serve_on_with_actuator,
-    serve_on_with_policy, serve_on_with_policy_and_actuator,
-    serve_on_with_policy_and_actuator_and_security, serve_on_with_shutdown, shutdown_channel,
-    AppError, ControllerPrefix, ControllerRegistration, ControllerRoutes, JsonBody,
-    RouteAuthorizationMetadata, RouteMetadata, ServerError, ServerOutcome, ShutdownFuture,
-    ShutdownHandle, ShutdownRequestError, WebError,
+    build_router, build_router_with_actuator_and_health_registry,
+    build_router_with_actuator_and_health_registry_and_security, join_paths, run_on,
+    run_on_with_log_level, serve_on, serve_on_with_actuator, serve_on_with_policy,
+    serve_on_with_policy_and_actuator, serve_on_with_policy_and_actuator_and_security,
+    serve_on_with_shutdown, shutdown_channel, AppError, ControllerPrefix, ControllerRegistration,
+    ControllerRoutes, JsonBody, RouteAuthorizationMetadata, RouteMetadata, ServerError,
+    ServerOutcome, ShutdownFuture, ShutdownHandle, ShutdownRequestError, WebError,
 };
 
 pub type Result<T> = std::result::Result<T, AppError>;
@@ -459,10 +463,10 @@ pub mod prelude {
         BootUiConfig, ComponentKind, ComponentMetadata, Config, ConfigError, ConfigLoader,
         ConfigProperties, ControllerPrefix, ControllerRegistration, ControllerRoutes,
         GraphDescriptor, GraphEdgeDescriptor, GraphError, GraphNodeDescriptor, GraphNodeKind,
-        GraphPhase, GraphPlan, JsonBody, LogLevel, LoggingConfig, Properties, ProviderFailure,
-        Result, RouteMetadata, ScafraConfig, ScafraError, SchedulerConfig, ServerConfig,
-        ServerError, ServerOutcome, ShutdownPolicy, ShutdownReason, StartupError, ValidationError,
-        WebError,
+        GraphPhase, GraphPlan, HealthRegistry, HealthRegistryError, JsonBody, LogLevel,
+        LoggingConfig, Properties, ProviderFailure, Result, RouteMetadata, ScafraConfig,
+        ScafraError, SchedulerConfig, ServerConfig, ServerError, ServerOutcome, ShutdownPolicy,
+        ShutdownReason, StartupError, ValidationError, WebError,
     };
     pub use axum::{
         extract::{Json, Path, Query},

@@ -722,6 +722,8 @@ fn rendered_graph_composes_services_into_injected_controllers() {
     assert!(generated.contains("crate::app::GreetingService::new(node_"));
     assert!(generated.contains("__scafra_register_routes_with(router, self.node_"));
     assert!(generated.contains("ControllerRoutes>::route_metadata()"));
+    assert!(generated.contains("pub fn build_router_with_health_registry"));
+    assert!(generated.contains("router_with_health_registry(actuator, health_registry)?"));
 }
 
 #[test]

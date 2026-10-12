@@ -1085,6 +1085,7 @@ dependencies = [
  "inventory",
  "serde",
  "tokio",
+ "tower",
  "tracing",
 ]
 

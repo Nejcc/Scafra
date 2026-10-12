@@ -1,136 +1,44 @@
 //! Configurable operational endpoints for Scafra applications.
+//!
+//! [`HealthRegistry`] provides graph-scoped checks. Build and populate one
+//! registry for each application, then move it into
+//! [`router_with_health_registry`]. The router owns the immutable registry for
+//! its lifetime, and health checks may capture owned application state such as
+//! an `Arc` to a graph service.
+//!
+//! [`register_health_check!`] and [`HealthCheckRegistration`] remain available
+//! for compatibility. Those registrations are process-wide, have no access to
+//! an application graph, and are included only by [`router`]. They are suitable
+//! for simple process-wide checks, not per-application dependencies.
 
-use axum::{
-    extract::Extension,
-    http::{HeaderMap, StatusCode},
-    response::{IntoResponse, Response},
-    routing::get,
-    Json, Router,
-};
-use serde::{Deserialize, Serialize};
-use std::{
-    any::Any,
-    future::Future,
-    panic::{catch_unwind, AssertUnwindSafe},
-    pin::Pin,
-    task::{Context, Poll},
-    time::Duration,
-};
+mod config;
+mod handlers;
+mod health;
+mod registry;
+mod routing;
+mod security;
 
-/// Selects which built-in operational endpoint groups are installed.
-#[derive(Debug, Clone, Deserialize, Serialize)]
-#[serde(untagged)]
-pub enum EndpointSelection {
-    /// A YAML list such as `['health', 'info']`.
-    Names(Vec<String>),
-    /// A properties-friendly value such as `health,info` or `*`.
-    Pattern(String),
-}
-
-impl Default for EndpointSelection {
-    fn default() -> Self {
-        Self::Names(Vec::new())
-    }
-}
-
-/// Controls which Scafra actuator endpoint groups are installed.
-#[derive(Debug, Clone, Default, Deserialize, Serialize)]
-pub struct ActuatorConfig {
-    /// Endpoint groups: `health`, `live`, `ready`, `info`, or `*` for all.
-    #[serde(default)]
-    pub endpoints: EndpointSelection,
-    #[serde(default)]
-    pub health: HealthConfig,
-    #[serde(default)]
-    pub security: ActuatorSecurity,
-}
-
-/// Controls how registered health checks are evaluated.
-///
-/// An empty `checks` list means all statically registered checks. Each selected
-/// check runs sequentially and receives its own timeout. A timeout or a check
-/// returning `false` or unwinding while running marks readiness and aggregate
-/// health as down. Timed-out futures are dropped, which cancels cooperative
-/// async work.
-#[derive(Debug, Clone, Deserialize, Serialize)]
-pub struct HealthConfig {
-    #[serde(default)]
-    pub checks: Vec<String>,
-    /// Maximum time allowed for each check, in milliseconds. Defaults to 1000.
-    #[serde(default = "default_check_timeout_ms")]
-    pub check_timeout_ms: u64,
-}
-
-fn default_check_timeout_ms() -> u64 {
-    1000
-}
-
-impl Default for HealthConfig {
-    fn default() -> Self {
-        Self {
-            checks: Vec::new(),
-            check_timeout_ms: default_check_timeout_ms(),
-        }
-    }
-}
-
-/// Optional bearer-token protection for actuator endpoints.
-#[derive(Debug, Clone, Default, Deserialize, Serialize)]
-pub struct ActuatorSecurity {
-    #[serde(default)]
-    pub enabled: bool,
-    #[serde(default, skip_serializing)]
-    pub bearer_token: Option<String>,
-}
-
-/// A statically registered asynchronous health check.
-///
-/// Checks may perform asynchronous I/O. They must not block while being polled;
-/// Tokio cannot preempt synchronous work inside a future. Return `false` for an
-/// unhealthy dependency. The configured timeout drops the future, but cannot
-/// undo external side effects or stop work that the future detached elsewhere.
-/// An unwinding panic while creating or polling the check is logged and treated
-/// as unhealthy. With `panic=abort`, the process terminates instead.
-pub type HealthCheckFuture = Pin<Box<dyn Future<Output = bool> + Send + 'static>>;
-
-struct CatchUnwind {
-    future: HealthCheckFuture,
-}
-
-impl Future for CatchUnwind {
-    type Output = Result<bool, Box<dyn Any + Send + 'static>>;
-
-    fn poll(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Self::Output> {
-        let this = self.get_mut();
-        match catch_unwind(AssertUnwindSafe(|| this.future.as_mut().poll(cx))) {
-            Ok(Poll::Pending) => Poll::Pending,
-            Ok(Poll::Ready(healthy)) => Poll::Ready(Ok(healthy)),
-            Err(panic) => Poll::Ready(Err(panic)),
-        }
-    }
-}
-
-/// A health check supplied by an Scafra application or adapter.
-pub struct HealthCheckRegistration {
-    pub name: &'static str,
-    pub check: fn() -> HealthCheckFuture,
-}
-
-inventory::collect!(HealthCheckRegistration);
+pub use config::{ActuatorConfig, ActuatorSecurity, EndpointSelection, HealthConfig};
+pub use health::HealthCheckFuture;
+pub use registry::HealthCheckRegistration;
+pub use registry::{HealthRegistry, HealthRegistryError};
+pub use routing::{reserved_routes, router, router_with_health_registry};
 
 pub use inventory;
 
-/// Registers an asynchronous actuator health check.
+/// Registers a legacy process-wide asynchronous actuator health check.
 ///
-/// The check function must be an `async fn` returning `bool`; return `false`
-/// when the dependency is unhealthy. Each selected check is subject to
+/// This compatibility macro cannot capture application-owned services and its
+/// registrations are visible to every router built with [`router`]. Use
+/// [`HealthRegistry::register`] and [`router_with_health_registry`] for checks
+/// scoped to one application graph. A selected check is subject to
 /// [`HealthConfig::check_timeout_ms`].
 ///
 /// ```ignore
-/// async fn database_is_available() -> bool {
-///     database.ping().await.is_ok()
+/// async fn process_is_ready() -> bool {
+///     true
 /// }
-/// scafra::register_health_check!("database", database_is_available);
+/// scafra::register_health_check!("process", process_is_ready);
 /// ```
 #[macro_export]
 macro_rules! register_health_check {
@@ -143,220 +51,3 @@ macro_rules! register_health_check {
         }
     };
 }
-
-impl ActuatorConfig {
-    /// Enables every actuator endpoint group.
-    pub fn all() -> Self {
-        Self {
-            endpoints: EndpointSelection::Pattern("*".to_owned()),
-            health: HealthConfig::default(),
-            security: ActuatorSecurity::default(),
-        }
-    }
-
-    pub fn is_enabled(&self, endpoint: &str) -> bool {
-        match &self.endpoints {
-            EndpointSelection::Names(names) => {
-                names.iter().any(|name| name == "*" || name == endpoint)
-            }
-            EndpointSelection::Pattern(pattern) => pattern
-                .split(',')
-                .map(str::trim)
-                .any(|name| name == "*" || name == endpoint),
-        }
-    }
-
-    /// Returns the enabled endpoint groups in stable display order.
-    pub fn enabled_endpoints(&self) -> Vec<&'static str> {
-        ["health", "live", "ready", "info", "metrics"]
-            .into_iter()
-            .filter(|endpoint| self.is_enabled(endpoint))
-            .collect()
-    }
-}
-
-#[derive(Debug, Clone, Copy, Serialize)]
-struct HealthResponse {
-    status: &'static str,
-}
-
-#[derive(Debug, Clone, Copy, Serialize)]
-struct InfoResponse {
-    name: &'static str,
-    version: &'static str,
-}
-
-fn authorized(headers: &HeaderMap, config: &ActuatorConfig) -> bool {
-    if !config.security.enabled {
-        return true;
-    }
-    let Some(token) = config.security.bearer_token.as_deref() else {
-        return false;
-    };
-    headers
-        .get("authorization")
-        .and_then(|value| value.to_str().ok())
-        .is_some_and(|value| value == format!("Bearer {token}"))
-}
-
-fn protected(headers: &HeaderMap, config: &ActuatorConfig) -> Option<Response> {
-    (!authorized(headers, config)).then(|| StatusCode::UNAUTHORIZED.into_response())
-}
-
-async fn health_up(config: &ActuatorConfig) -> bool {
-    for registration in inventory::iter::<HealthCheckRegistration>() {
-        let selected = config.health.checks.is_empty()
-            || config
-                .health
-                .checks
-                .iter()
-                .any(|name| name != "*" && name == registration.name);
-        if !selected {
-            continue;
-        }
-
-        // Async checks let timeout drop their work. A synchronous check moved
-        // to spawn_blocking could not be stopped and could exhaust that pool.
-        let future = match catch_unwind(AssertUnwindSafe(|| (registration.check)())) {
-            Ok(future) => future,
-            Err(_) => {
-                tracing::error!(health_check = registration.name, "health check panicked");
-                return false;
-            }
-        };
-        let result = tokio::time::timeout(
-            Duration::from_millis(config.health.check_timeout_ms),
-            CatchUnwind { future },
-        )
-        .await;
-        match result {
-            Ok(Ok(true)) => {}
-            Ok(Err(_)) => {
-                tracing::error!(health_check = registration.name, "health check panicked");
-                return false;
-            }
-            Ok(Ok(false)) | Err(_) => return false,
-        }
-    }
-    true
-}
-
-async fn health(headers: HeaderMap, Extension(config): Extension<ActuatorConfig>) -> Response {
-    if let Some(response) = protected(&headers, &config) {
-        return response;
-    }
-    health_response(health_up(&config).await)
-}
-
-async fn liveness(headers: HeaderMap, Extension(config): Extension<ActuatorConfig>) -> Response {
-    if let Some(response) = protected(&headers, &config) {
-        return response;
-    }
-    health_response(true)
-}
-
-async fn readiness(headers: HeaderMap, Extension(config): Extension<ActuatorConfig>) -> Response {
-    if let Some(response) = protected(&headers, &config) {
-        return response;
-    }
-    health_response(health_up(&config).await)
-}
-
-fn health_response(up: bool) -> Response {
-    (
-        if up {
-            StatusCode::OK
-        } else {
-            StatusCode::SERVICE_UNAVAILABLE
-        },
-        Json(HealthResponse {
-            status: if up { "UP" } else { "DOWN" },
-        }),
-    )
-        .into_response()
-}
-
-async fn info(headers: HeaderMap, Extension(config): Extension<ActuatorConfig>) -> Response {
-    if let Some(response) = protected(&headers, &config) {
-        return response;
-    }
-    (
-        StatusCode::OK,
-        Json(InfoResponse {
-            name: "scafra",
-            version: env!("CARGO_PKG_VERSION"),
-        }),
-    )
-        .into_response()
-}
-
-async fn metrics(headers: HeaderMap, Extension(config): Extension<ActuatorConfig>) -> Response {
-    if let Some(response) = protected(&headers, &config) {
-        return response;
-    }
-    (StatusCode::OK, "# TYPE scafra_up gauge\nscafra_up 1\n").into_response()
-}
-
-/// Adds the built-in operational routes when the actuator is enabled.
-pub fn router(config: &ActuatorConfig) -> Router {
-    let mut router = Router::new();
-    if config.is_enabled("health") {
-        router = router
-            .route("/health", get(health))
-            .route("/actuator/health", get(health));
-    }
-    if config.is_enabled("live") {
-        router = router
-            .route("/live", get(liveness))
-            .route("/health/live", get(liveness))
-            .route("/actuator/health/liveness", get(liveness));
-    }
-    if config.is_enabled("ready") {
-        router = router
-            .route("/ready", get(readiness))
-            .route("/health/ready", get(readiness))
-            .route("/actuator/health/readiness", get(readiness));
-    }
-    if config.is_enabled("info") {
-        router = router
-            .route("/info", get(info))
-            .route("/actuator/info", get(info));
-    }
-    if config.is_enabled("metrics") {
-        router = router
-            .route("/metrics", get(metrics))
-            .route("/actuator/metrics", get(metrics));
-    }
-    router.layer(Extension(config.clone()))
-}
-
-/// Returns the built-in paths that must not be shadowed by application routes.
-pub fn reserved_routes(config: &ActuatorConfig) -> Vec<(&'static str, &'static str)> {
-    ROUTES
-        .iter()
-        .copied()
-        .filter(|(_, path)| match *path {
-            "/health" | "/actuator/health" => config.is_enabled("health"),
-            "/live" | "/health/live" | "/actuator/health/liveness" => config.is_enabled("live"),
-            "/ready" | "/health/ready" | "/actuator/health/readiness" => config.is_enabled("ready"),
-            "/info" | "/actuator/info" => config.is_enabled("info"),
-            "/metrics" | "/actuator/metrics" => config.is_enabled("metrics"),
-            _ => false,
-        })
-        .collect()
-}
-
-const ROUTES: [(&str, &str); 12] = [
-    ("GET", "/health"),
-    ("GET", "/health/live"),
-    ("GET", "/health/ready"),
-    ("GET", "/live"),
-    ("GET", "/ready"),
-    ("GET", "/info"),
-    ("GET", "/actuator/health"),
-    ("GET", "/actuator/health/liveness"),
-    ("GET", "/actuator/health/readiness"),
-    ("GET", "/actuator/info"),
-    ("GET", "/metrics"),
-    ("GET", "/actuator/metrics"),
-];
