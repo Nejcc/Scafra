@@ -322,7 +322,8 @@ where
         let trigger = shutdown.await;
         let _ = trigger_sender.send(trigger);
     };
-    let server = axum::serve(listener, router)
+    let service = router.into_make_service_with_connect_info::<SocketAddr>();
+    let server = axum::serve(listener, service)
         .with_graceful_shutdown(graceful_shutdown)
         .into_future();
     tokio::pin!(server);

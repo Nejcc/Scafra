@@ -3,8 +3,13 @@
 //! Add this crate explicitly when a browser-based operations view is wanted.
 //! Scafra core does not install or expose the dashboard by default.
 
-use axum::{response::Html, routing::get, Router};
+mod binding;
+mod dashboard;
+mod snapshot;
+
+pub use binding::BootUiPolicyError;
 pub use scafra_config::BootUiConfig;
+use scafra_config::{ConfigLoader, ScafraConfig};
 use std::net::SocketAddr;
 
 inventory::submit! {
@@ -13,105 +18,187 @@ inventory::submit! {
 
 /// Starts BootUI when it is enabled in `application.yml` or
 /// `application.properties`.
+///
+/// The configuration snapshot is created once before the listener starts.
+/// Invalid or unsafe bind policies are logged and prevent the listener from
+/// starting.
 pub fn start() {
-    let config = match scafra_config::ConfigLoader::new().load::<scafra_config::ScafraConfig>() {
-        Ok(config) => config.bootui,
-        Err(_) => return,
-    };
-    if !config.enabled {
-        return;
-    }
-
-    let address = format!("{}:{}", config.host, config.port);
-    let path = config.path.clone();
-    tokio::spawn(async move {
-        let Ok(address) = address.parse::<SocketAddr>() else {
-            tracing::error!("BootUI address is invalid");
+    let config = match ConfigLoader::new().load::<ScafraConfig>() {
+        Ok(config) => config,
+        Err(_) => {
+            tracing::error!(
+                error_kind = "bootui_configuration",
+                "BootUI configuration could not be loaded"
+            );
             return;
-        };
+        }
+    };
+
+    let prepared = match prepare(config) {
+        Ok(Some(prepared)) => prepared,
+        Ok(None) => return,
+        Err(error) => {
+            tracing::error!(
+                error_kind = "bootui_policy",
+                %error,
+                "BootUI was not started; correct the BootUI bind and security configuration"
+            );
+            return;
+        }
+    };
+
+    tokio::spawn(async move {
+        let address = prepared.address;
+        let path = prepared.path.clone();
         let listener = match tokio::net::TcpListener::bind(address).await {
             Ok(listener) => listener,
             Err(error) => {
                 tracing::error!(
                     %address,
                     error_kind = "bootui_bind",
-                    "BootUI could not bind its configured port: {error}"
+                    "BootUI could not bind its configured address: {error}"
                 );
                 return;
             }
         };
         tracing::info!(target: "scafra::startup", %address, path = %path, "Scafra BootUI started");
-        if let Err(error) = axum::serve(listener, layer(Router::new(), &config)).await {
-            tracing::error!("BootUI stopped unexpectedly: {error}");
+        let service = prepared
+            .router
+            .into_make_service_with_connect_info::<SocketAddr>();
+        if let Err(error) = axum::serve(listener, service).await {
+            tracing::error!(
+                error_kind = "bootui_server",
+                "BootUI stopped unexpectedly: {error}"
+            );
         }
     });
 }
 
 /// Adds the BootUI dashboard to an existing Scafra router.
 ///
-/// The dashboard is only added when `bootui.enabled` is true. The application
-/// should bind its server to the configured local host when `local_only` is
-/// enabled; the dashboard itself never changes the application's bind policy.
-pub fn layer(router: Router, config: &BootUiConfig) -> Router {
+/// For compatibility, the dashboard settings are supplied separately and the
+/// remaining application settings are loaded once from the normal
+/// configuration sources. Prefer [`try_layer_with_config`] when the
+/// application already has its complete configuration value.
+///
+/// A local-only dashboard checks the connecting peer address and rejects
+/// requests when the server does not provide connection information. A
+/// non-local dashboard is added only when Scafra authentication is configured.
+/// Use Scafra's server adapter, which supplies peer information, or provide
+/// equivalent `ConnectInfo<SocketAddr>` extensions in a custom Axum server.
+pub fn layer(router: axum::Router, config: &BootUiConfig) -> axum::Router {
     if !config.enabled {
         return router;
     }
 
-    let path = config.path.trim_end_matches('/');
-    let dashboard = Router::new()
-        .route("/", get(index))
-        .route("/api/config", get(config_snapshot));
-    router.nest(path, dashboard)
+    let mut application_config = match ConfigLoader::new().load::<ScafraConfig>() {
+        Ok(config) => config,
+        Err(_) => {
+            tracing::warn!(
+                error_kind = "bootui_configuration",
+                "BootUI is using default application link settings because configuration could not be loaded"
+            );
+            ScafraConfig::default()
+        }
+    };
+    application_config.bootui = config.clone();
+    match try_layer_with_config(router.clone(), &application_config) {
+        Ok(router) => router,
+        Err(error) => {
+            tracing::error!(
+                error_kind = "bootui_policy",
+                %error,
+                "BootUI routes were not added; correct the BootUI bind and security configuration"
+            );
+            router
+        }
+    }
 }
 
-async fn index() -> Html<&'static str> {
-    Html(
-        r##"<!doctype html>
-<html lang="en">
-<head>
-  <meta charset="utf-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>Scafra BootUI</title>
-  <style>
-    :root { color-scheme: dark; font-family: Inter, system-ui, sans-serif; }
-    body { margin: 0; background: #111827; color: #f9fafb; }
-    header { padding: 28px 36px; background: linear-gradient(135deg,#241205,#7c2d12); }
-    h1 { margin: 0 0 6px; color: #fb923c; }
-    main { padding: 28px 36px; display: grid; gap: 18px; grid-template-columns: repeat(auto-fit,minmax(240px,1fr)); }
-    section { padding: 20px; border: 1px solid #374151; border-radius: 14px; background: #1f2937; }
-    code, pre { color: #fdba74; white-space: pre-wrap; }
-    .muted { color: #9ca3af; }
-  </style>
-</head>
-<body>
-  <header><h1>🔥 Scafra BootUI</h1><div class="muted">Local application operations dashboard</div></header>
-  <main>
-    <section><h2>Application</h2><pre id="config">Loading...</pre></section>
-    <section><h2>Endpoints</h2><p><a id="health" href="#">Health</a></p><p><a id="live" href="#">Live</a></p><p><a id="ready" href="#">Ready</a></p><p><a id="metrics" href="#">Metrics</a></p></section>
-    <section><h2>Status</h2><p class="muted">Use the actuator endpoints for live health data.</p></section>
-  </main>
-  <script>
-    const base = window.location.pathname.replace(/\/$/, '');
-    fetch(base + '/api/config').then(response => response.json()).then(value => {
-      document.getElementById('config').textContent = JSON.stringify(value, null, 2);
-      const server = `http://${value.server.host}:${value.server.port}`;
-      document.getElementById('health').href = server + '/health';
-      document.getElementById('live').href = server + '/live';
-      document.getElementById('ready').href = server + '/ready';
-      document.getElementById('metrics').href = server + '/metrics';
-    }).catch(error => document.getElementById('config').textContent = String(error));
-  </script>
-</body>
-</html>"##,
-    )
+/// Adds BootUI using a complete application configuration value.
+///
+/// This checked API is useful for custom configuration sources and returns a
+/// policy error instead of silently omitting the dashboard. When
+/// `local_only=true`, the configured BootUI address must be loopback and
+/// requests from non-loopback peers are rejected. When `local_only=false`,
+/// Scafra authentication must be enabled and is applied directly to every
+/// BootUI route, regardless of `security.permit_all`.
+pub fn try_layer_with_config(
+    router: axum::Router,
+    config: &ScafraConfig,
+) -> Result<axum::Router, BootUiPolicyError> {
+    if !config.bootui.enabled {
+        return Ok(router);
+    }
+
+    let binding = binding::resolve(&config.bootui, &config.security)?;
+    let snapshot = snapshot::BootUiSnapshot::from_config(config);
+    let dashboard = dashboard::router(snapshot, binding.protection);
+    let path = config.bootui.path.trim_end_matches('/');
+    if path.is_empty() || !path.starts_with('/') {
+        return Err(BootUiPolicyError::InvalidPath);
+    }
+    Ok(router.nest(path, dashboard))
 }
 
-async fn config_snapshot() -> axum::Json<serde_json::Value> {
-    let loader = scafra_config::ConfigLoader::new();
-    match loader.load::<scafra_config::ScafraConfig>() {
-        Ok(config) => axum::Json(serde_json::to_value(config).unwrap_or_else(
-            |_| serde_json::json!({"error": "configuration could not be serialized"}),
-        )),
-        Err(_) => axum::Json(serde_json::json!({"error": "configuration could not be loaded"})),
+struct PreparedBootUi {
+    address: SocketAddr,
+    path: String,
+    router: axum::Router,
+}
+
+fn prepare(config: ScafraConfig) -> Result<Option<PreparedBootUi>, BootUiPolicyError> {
+    if !config.bootui.enabled {
+        return Ok(None);
+    }
+
+    let binding = binding::resolve(&config.bootui, &config.security)?;
+    let path = config.bootui.path.trim_end_matches('/');
+    if path.is_empty() || !path.starts_with('/') {
+        return Err(BootUiPolicyError::InvalidPath);
+    }
+
+    let dashboard = dashboard::router(
+        snapshot::BootUiSnapshot::from_config(&config),
+        binding.protection,
+    );
+    Ok(Some(PreparedBootUi {
+        address: binding.address,
+        path: path.to_owned(),
+        router: axum::Router::new().nest(path, dashboard),
+    }))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn unsafe_startup_policy_fails_before_a_listener_can_be_created() {
+        let mut config = ScafraConfig::default();
+        config.bootui.enabled = true;
+        config.bootui.host = "0.0.0.0".to_owned();
+        config.bootui.local_only = true;
+
+        assert!(matches!(
+            prepare(config),
+            Err(BootUiPolicyError::LoopbackRequired)
+        ));
+    }
+
+    #[test]
+    fn startup_policy_accepts_ipv4_and_ipv6_loopback_addresses() {
+        for host in ["127.0.0.1", "::1"] {
+            let mut config = ScafraConfig::default();
+            config.bootui.enabled = true;
+            config.bootui.host = host.to_owned();
+
+            let prepared = match prepare(config) {
+                Ok(Some(prepared)) => prepared,
+                Ok(None) => panic!("enabled BootUI should be prepared"),
+                Err(error) => panic!("loopback host {host} should be accepted: {error}"),
+            };
+            assert!(prepared.address.ip().is_loopback());
+        }
     }
 }
