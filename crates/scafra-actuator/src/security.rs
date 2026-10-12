@@ -11,9 +11,13 @@ pub(crate) fn protected(headers: &HeaderMap, config: &ActuatorConfig) -> Option<
     let Some(token) = config.security.bearer_token.as_deref() else {
         return Some(StatusCode::UNAUTHORIZED.into_response());
     };
+    if token.trim().is_empty() {
+        return Some(StatusCode::UNAUTHORIZED.into_response());
+    }
     let valid = headers
         .get("authorization")
         .and_then(|value| value.to_str().ok())
-        .is_some_and(|value| value == format!("Bearer {token}"));
+        .and_then(|value| value.strip_prefix("Bearer "))
+        .is_some_and(|candidate| candidate == token);
     (!valid).then(|| StatusCode::UNAUTHORIZED.into_response())
 }

@@ -1,4 +1,5 @@
 use serde::{Deserialize, Serialize};
+use std::fmt;
 
 /// Selects which built-in operational endpoint groups are installed.
 #[derive(Debug, Clone, Deserialize, Serialize)]
@@ -19,7 +20,7 @@ impl Default for EndpointSelection {
 /// Controls which Scafra actuator endpoint groups are installed.
 #[derive(Debug, Clone, Default, Deserialize, Serialize)]
 pub struct ActuatorConfig {
-    /// Endpoint groups: `health`, `live`, `ready`, `info`, or `*` for all.
+    /// Endpoint groups: `health`, `live`, `ready`, `info`, `metrics`, or `*` for all.
     #[serde(default)]
     pub endpoints: EndpointSelection,
     #[serde(default)]
@@ -58,12 +59,22 @@ impl Default for HealthConfig {
 }
 
 /// Optional bearer-token protection for actuator endpoints.
-#[derive(Debug, Clone, Default, Deserialize, Serialize)]
+#[derive(Clone, Default, Deserialize, Serialize)]
 pub struct ActuatorSecurity {
     #[serde(default)]
     pub enabled: bool,
     #[serde(default, skip_serializing)]
     pub bearer_token: Option<String>,
+}
+
+impl fmt::Debug for ActuatorSecurity {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter
+            .debug_struct("ActuatorSecurity")
+            .field("enabled", &self.enabled)
+            .field("bearer_token_configured", &self.bearer_token.is_some())
+            .finish()
+    }
 }
 
 impl ActuatorConfig {

@@ -7,6 +7,8 @@ use scafra_actuator::{
 };
 use tower::ServiceExt;
 
+const UNKNOWN_CHECK_NAME: &str = "unknown-legacy-check";
+
 async fn legacy_check() -> bool {
     true
 }
@@ -43,7 +45,7 @@ async fn legacy_macro_still_registers_for_compatibility_router() {
 async fn legacy_router_fails_closed_for_unknown_configured_check_names() {
     let config = ActuatorConfig {
         health: HealthConfig {
-            checks: vec!["unknown-legacy-check".to_owned()],
+            checks: vec![UNKNOWN_CHECK_NAME.to_owned()],
             ..HealthConfig::default()
         },
         ..ActuatorConfig::all()
@@ -61,7 +63,7 @@ async fn legacy_router_fails_closed_for_unknown_configured_check_names() {
     let body = to_bytes(response.into_body(), 1024)
         .await
         .expect("response body should be readable");
-    assert!(!String::from_utf8_lossy(&body).contains("unknown-legacy-check"));
+    assert!(!String::from_utf8_lossy(&body).contains(UNKNOWN_CHECK_NAME));
 }
 
 #[test]
