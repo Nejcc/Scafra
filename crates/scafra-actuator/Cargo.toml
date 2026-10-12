@@ -13,3 +13,6 @@ inventory.workspace = true
 serde.workspace = true
 tokio.workspace = true
 tracing.workspace = true
+
+[dev-dependencies]
+tower.workspace = true

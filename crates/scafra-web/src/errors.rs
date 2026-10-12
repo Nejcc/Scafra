@@ -101,6 +101,12 @@ pub enum WebError {
     Server(#[source] std::io::Error),
 }
 
+impl From<scafra_actuator::HealthRegistryError> for WebError {
+    fn from(error: scafra_actuator::HealthRegistryError) -> Self {
+        Self::Server(std::io::Error::new(std::io::ErrorKind::InvalidInput, error))
+    }
+}
+
 /// A typed failure from the Scafra server lifecycle boundary.
 ///
 /// The legacy [`WebError`] API intentionally remains unchanged. New code can

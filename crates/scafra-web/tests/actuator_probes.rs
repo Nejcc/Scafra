@@ -102,7 +102,7 @@ async fn aggregate_health_keeps_evaluating_the_configured_checks() {
 }
 
 #[tokio::test]
-async fn readiness_respects_health_check_selection() {
+async fn unknown_readiness_check_selection_fails_closed() {
     let config = ActuatorConfig {
         health: HealthConfig {
             checks: vec!["another-check".to_owned()],
@@ -111,9 +111,17 @@ async fn readiness_respects_health_check_selection() {
         ..ActuatorConfig::all()
     };
 
-    let (status, body) = get(&config, "/ready").await;
-    assert_eq!(status, StatusCode::OK);
-    assert_eq!(body, r#"{"status":"UP"}"#);
+    for path in [
+        "/ready",
+        "/health/ready",
+        "/actuator/health/readiness",
+        "/health",
+        "/actuator/health",
+    ] {
+        let (status, body) = get(&config, path).await;
+        assert_eq!(status, StatusCode::SERVICE_UNAVAILABLE, "{path}");
+        assert_eq!(body, r#"{"status":"DOWN"}"#, "{path}");
+    }
 }
 
 #[tokio::test]

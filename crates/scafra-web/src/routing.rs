@@ -5,7 +5,7 @@ use axum::{extract::DefaultBodyLimit, http::StatusCode, Router};
 use tower_http::{timeout::TimeoutLayer, trace::TraceLayer};
 
 use crate::{errors::WebError, registration::ControllerRegistration};
-use scafra_actuator::ActuatorConfig;
+use scafra_actuator::{ActuatorConfig, HealthRegistry};
 
 /// Joins a controller prefix and method path while preserving Axum route
 /// syntax, including path parameters such as {id}.
@@ -25,16 +25,48 @@ pub fn build_router() -> Result<Router, WebError> {
     build_router_with_actuator(&ActuatorConfig::default())
 }
 
-/// Builds the application router with configurable operational endpoints.
+/// Builds the application router with configurable operational endpoints and
+/// legacy process-wide health registrations.
+///
+/// Use [`build_router_with_actuator_and_health_registry`] to pass checks owned
+/// by one application graph.
 pub fn build_router_with_actuator(actuator: &ActuatorConfig) -> Result<Router, WebError> {
     build_router_with_actuator_and_security(actuator, &scafra_security::SecurityConfig::default())
 }
 
+/// Builds the application router with legacy process-wide health registrations
+/// and the supplied application security configuration.
+///
+/// Use [`build_router_with_actuator_and_health_registry_and_security`] to pass
+/// checks owned by one application graph.
 pub fn build_router_with_actuator_and_security(
     actuator: &ActuatorConfig,
     security: &scafra_security::SecurityConfig,
 ) -> Result<Router, WebError> {
     build_router_with_timeout(actuator, security, None)
+}
+
+/// Builds the default application router with checks owned by one graph.
+pub fn build_router_with_actuator_and_health_registry(
+    actuator: &ActuatorConfig,
+    registry: HealthRegistry,
+) -> Result<Router, WebError> {
+    build_router_with_actuator_and_health_registry_and_security(
+        actuator,
+        registry,
+        &scafra_security::SecurityConfig::default(),
+    )
+}
+
+/// Builds the default application router with graph-scoped health checks and
+/// the supplied application security configuration.
+pub fn build_router_with_actuator_and_health_registry_and_security(
+    actuator: &ActuatorConfig,
+    registry: HealthRegistry,
+    security: &scafra_security::SecurityConfig,
+) -> Result<Router, WebError> {
+    let router = scafra_actuator::router_with_health_registry(actuator, registry)?;
+    build_router_with_actuator_router(router, actuator, security, None)
 }
 
 pub(crate) fn build_router_with_timeout(
@@ -43,6 +75,15 @@ pub(crate) fn build_router_with_timeout(
     request_timeout: Option<Duration>,
 ) -> Result<Router, WebError> {
     let router = scafra_actuator::router(actuator);
+    build_router_with_actuator_router(router, actuator, security, request_timeout)
+}
+
+fn build_router_with_actuator_router(
+    router: Router,
+    actuator: &ActuatorConfig,
+    security: &scafra_security::SecurityConfig,
+    request_timeout: Option<Duration>,
+) -> Result<Router, WebError> {
     let routes = default_controller_metadata(&[]);
     validate_routes(&routes, actuator)?;
     let router = register_default_controllers(router, &[]);

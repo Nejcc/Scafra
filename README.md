@@ -222,32 +222,81 @@ Use `endpoints: "*"` for all endpoints, or
 `actuator.endpoints=health,info` in `application.properties`.
 
 Metrics can be exposed with `metrics`, and actuator endpoints can be protected
-with `actuator.security.enabled=true` and a bearer token. Applications can
-register asynchronous checks with `register_health_check!`. Checks may perform
-asynchronous I/O and return `false` when a dependency is unhealthy. They must
-not block synchronously while being polled. Each selected check runs in order
-with a 1000 ms timeout by default; set `actuator.health.check_timeout_ms` to
-change the per-check timeout. A check that returns `false`, unwinds, or times out
-marks readiness and aggregate health `DOWN` (HTTP 503); unwinding panics are
-logged. With `panic=abort`, a panic terminates the process. A timeout drops the
-async future, but work detached by that future and external side effects cannot
-be cancelled or undone.
-A cancelled probe request also drops its in-flight check future.
+with `actuator.security.enabled=true` and a bearer token. For application
+dependencies, build a `HealthRegistry` for each graph and move it into the
+actuator router before serving requests:
+
+~~~rust,ignore
+let store = std::sync::Arc::new(PetStore::new());
+let store_for_check = std::sync::Arc::clone(&store);
+let mut health = scafra::HealthRegistry::new();
+health.register("pet-store", move || {
+    let store = std::sync::Arc::clone(&store_for_check);
+    async move { store.ping().await.is_ok() }
+})?;
+
+let router = scafra::actuator::router_with_health_registry(
+    &config.actuator,
+    health,
+)?;
+~~~
+
+The closure owns the service handle for this application. Build separate
+registries for separate graphs, even when their checks share a name. The
+registry is consumed by router construction and stays fixed for the router's
+lifetime; register checks before serving starts. Registration rejects empty or
+whitespace-only names and duplicate names within one registry.
+
+Generated dependency graphs also expose
+`Graph::build_router_with_health_registry`. Use it from a custom
+`run_with_router` startup path when the registry captures graph-owned service
+handles. `compose_with` can receive an application-owned `Arc` while a clone is
+captured by a health check. The standard `#[scafra::main]` path keeps using the
+legacy static registration path for compatibility; graph-scoped registration
+is explicit and is not discovered automatically from service types.
+
+`register_health_check!` remains available for simple checks that only inspect
+process-wide state. Its inventory registrations are process-global, run for
+every router built with a compatibility constructor such as
+`router(&ActuatorConfig)` or `build_router_with_actuator`, and cannot access a
+particular graph's services. Existing users can migrate by creating a
+`HealthRegistry`, registering closures that capture their service handles, and
+using `router_with_health_registry` or the generated graph method.
+
+An empty `actuator.health.checks` list selects all checks in that router's
+registry; `*` also selects all checks. An empty registry has no dependency
+checks and reports `UP`. A configured unknown name is rejected during
+graph-scoped router construction. The legacy constructor cannot return a
+construction error, so it reports `DOWN` for an unknown selection. Unknown
+names are not included in diagnostics. With `*`, any additional configured
+names are still validated and must exist.
+
+Checks may perform asynchronous I/O and return `false` when a dependency is
+unhealthy. They must not block synchronously while being polled. Each selected
+check runs sequentially with a 1000 ms timeout by default; set
+`actuator.health.check_timeout_ms` to change the per-check timeout. A check that
+returns `false`, unwinds while being created or polled, or times out marks
+readiness and aggregate health `DOWN` (HTTP 503). Panic payloads are not included
+in actuator responses or Scafra's health-check log messages. With `panic=abort`,
+a panic terminates the process. A timeout drops the async future, but work
+detached by that future and external side effects cannot be cancelled or
+undone. A cancelled probe request also drops its in-flight check future.
+
 To migrate a synchronous check, make it an `async fn` and use asynchronous I/O;
 there is no safe way to interrupt an arbitrary blocking Rust function after it
 starts. If code constructs `HealthConfig` with a struct literal, add
 `..HealthConfig::default()` or set `check_timeout_ms` explicitly.
 
-The readiness aliases `/ready`,
-`/health/ready`, and `/actuator/health/readiness` evaluate the registered
-checks selected by `actuator.health.checks` (an empty list selects all); a
-selected check that fails returns `DOWN` with HTTP 503. The liveness aliases
-`/live`, `/health/live`, and `/actuator/health/liveness` return `UP` without
-running registered health checks, so a dependency check does not make the
-process appear dead. The aggregate endpoints `/health` and `/actuator/health`
-retain the same configured-check evaluation as readiness. These responses
-report the result of the checks and request handler; they do not guarantee that
-every other part of the application or its dependencies is healthy.
+The readiness aliases `/ready`, `/health/ready`, and
+`/actuator/health/readiness` evaluate the configured checks; a selected check
+that fails returns `DOWN` with HTTP 503. The liveness aliases `/live`,
+`/health/live`, and `/actuator/health/liveness` return `UP` without running
+dependency checks, so a dependency failure does not make the process appear
+dead. Aggregate health at `/health` and `/actuator/health` uses the same selected
+checks as readiness. Actuator authorization is checked before any protected
+health check executes. Multiple application graphs in one process are
+supported when each uses its own `HealthRegistry`; legacy static checks remain
+shared by design.
 
 Scafra's application security is opt-in. It supports a shared bearer token,
 HTTP Basic authentication, or JWT resource-server validation. JWT can use a
