@@ -50,7 +50,7 @@ async fn actuator_can_be_disabled_without_affecting_application_routes() {
 }
 
 #[tokio::test]
-async fn actuator_endpoint_selection_and_security_are_configurable() {
+async fn valid_actuator_bearer_token_authorizes_http_requests() {
     let config = ActuatorConfig {
         endpoints: EndpointSelection::Pattern("metrics".to_owned()),
         security: ActuatorSecurity {
