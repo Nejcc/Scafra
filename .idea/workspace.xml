@@ -44,15 +44,7 @@
     </cargoProject>
   </component>
   <component name="ChangeListManager">
-    <list default="true" id="69684049-dde4-4332-b279-5a57ecfc4eb5" name="Changes" comment="&#10;feat(security): define route-level authorization policies&#10;&#10;Add controller and route authorization with explicit public and protected&#10;policies, role and scope checks, and documented inheritance rules.&#10;&#10;Reject invalid credentials and prevent policy bypasses through alternate&#10;methods, trailing slashes, fallbacks, or duplicate Authorization headers.&#10;Add router integration tests and security migration documentation.">
-      <change beforePath="$PROJECT_DIR$/.idea/shelf/Uncommitted_changes_before_Update_at_09_10_2026_15_50__Changes_.xml" beforeDir="false" />
-      <change beforePath="$PROJECT_DIR$/.idea/workspace.xml" beforeDir="false" afterPath="$PROJECT_DIR$/.idea/workspace.xml" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/Cargo.lock" beforeDir="false" afterPath="$PROJECT_DIR$/Cargo.lock" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/README.md" beforeDir="false" afterPath="$PROJECT_DIR$/README.md" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/crates/scafra-bootui/Cargo.toml" beforeDir="false" afterPath="$PROJECT_DIR$/crates/scafra-bootui/Cargo.toml" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/crates/scafra-bootui/src/lib.rs" beforeDir="false" afterPath="$PROJECT_DIR$/crates/scafra-bootui/src/lib.rs" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/crates/scafra-web/src/server.rs" beforeDir="false" afterPath="$PROJECT_DIR$/crates/scafra-web/src/server.rs" afterDir="false" />
-    </list>
+    <list default="true" id="69684049-dde4-4332-b279-5a57ecfc4eb5" name="Changes" comment="fix(config): reject blank actuator bearer tokens" />
     <option name="SHOW_DIALOG" value="false" />
     <option name="HIGHLIGHT_CONFLICTS" value="true" />
     <option name="HIGHLIGHT_NON_ACTIVE_CHANGELIST" value="false" />
@@ -62,7 +54,7 @@
   <component name="Git.Settings">
     <option name="RECENT_BRANCH_BY_REPOSITORY">
       <map>
-        <entry key="$PROJECT_DIR$" value="7-define-and-test-route-level-authorization-policies" />
+        <entry key="$PROJECT_DIR$" value="77-reject-empty-actuator-bearer-tokens-during-startup" />
       </map>
     </option>
     <option name="RECENT_GIT_ROOT_PATH" value="$PROJECT_DIR$" />
@@ -103,7 +95,7 @@
     "RunOnceActivity.rust.reset.selective.auto.import": "true",
     "RunOnceActivity.typescript.service.memoryLimit.init": "true",
     "codeWithMe.voiceChat.enabledByDefault": "false",
-    "git-widget-placeholder": "72-sec-05-protect-bootui-configuration-snapshots-and-bind-scope",
+    "git-widget-placeholder": "main",
     "git.auto.fetch.suggestion.counter": "3",
     "last_opened_file_path": "/home/steffenp/workspace/ember-rs/ember-test-services",
     "nodejs_package_manager_path": "npm",
@@ -214,6 +206,8 @@
     <MESSAGE value="&#10;Liveness endpoints now return `UP` without evaluating registered health checks. Readiness and aggregate health endpoints continue to evaluate configured checks. Add router tests for aliases, filtering, aggregate behavior, and bearer authentication. Update README probe documentation." />
     <MESSAGE value="Settle async health check execution contract&#10;&#10;Register health checks as async functions with per-check timeouts.&#10;Treat failed, timed-out, and panicking checks as unhealthy, while&#10;preserving liveness, readiness, and aggregate probe behavior.&#10;&#10;Document cancellation limits and migration guidance, and add tests for&#10;timeouts, cancellation, and panics." />
     <MESSAGE value="&#10;feat(security): define route-level authorization policies&#10;&#10;Add controller and route authorization with explicit public and protected&#10;policies, role and scope checks, and documented inheritance rules.&#10;&#10;Reject invalid credentials and prevent policy bypasses through alternate&#10;methods, trailing slashes, fallbacks, or duplicate Authorization headers.&#10;Add router integration tests and security migration documentation." />
-    <option name="LAST_COMMIT_MESSAGE" value="&#10;feat(security): define route-level authorization policies&#10;&#10;Add controller and route authorization with explicit public and protected&#10;policies, role and scope checks, and documented inheritance rules.&#10;&#10;Reject invalid credentials and prevent policy bypasses through alternate&#10;methods, trailing slashes, fallbacks, or duplicate Authorization headers.&#10;Add router integration tests and security migration documentation." />
+    <MESSAGE value="feat(bootui): protect config snapshots and bind scope" />
+    <MESSAGE value="fix(config): reject blank actuator bearer tokens" />
+    <option name="LAST_COMMIT_MESSAGE" value="fix(config): reject blank actuator bearer tokens" />
   </component>
 </project>

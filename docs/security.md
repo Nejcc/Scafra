@@ -4,6 +4,25 @@ Scafra supports shared bearer tokens, HTTP Basic credentials, and JWT resource
 server validation. Route and controller policies use the configured
 authenticator; they do not introduce a second identity system.
 
+## Crate API and modules
+
+`scafra-security` keeps its public API at the crate root. Existing imports of
+`SecurityConfig`, `BasicAuthConfig`, `JwtConfig`, authorization policy types,
+registration metadata, `layer`, and `layer_with_route_policies` remain valid.
+The implementation is organized by responsibility:
+
+- `config` defines security configuration defaults and validation.
+- `policy` defines controller and route requirements and matches route paths.
+- `middleware` applies those decisions to Axum requests and responses.
+- `authentication` parses shared bearer and Basic credentials.
+- `jwt` validates signatures and standard claims and extracts roles/scopes.
+- `jwks` performs issuer discovery, retrieves RSA key sets, and caches them.
+
+These modules are implementation details; callers should continue using the
+crate-root API. Configuration debug output redacts bearer tokens, Basic
+usernames and passwords, JWT HMAC secrets, and issuer/JWKS URLs. The crate does
+not log credentials or include them in authentication responses.
+
 ## Defaults
 
 Application security is disabled by default. With `security.enabled: false`,
@@ -124,6 +143,8 @@ route requires roles or scopes.
   to mask both authentication and authorization denials as `404 Not Found`.
 - Explicitly public routes do not authenticate or inspect an `Authorization`
   header.
+- Unsupported schemes and malformed credentials are rejected; failures do not
+  fall back to anonymous access.
 
 Enable JWT protection in `application.yaml` like this:
 
@@ -161,3 +182,13 @@ Scafra does not fetch user roles from an external directory or interpret
 provider-specific nested role claims; applications must issue the documented
 claim shapes. Scafra does not terminate TLS, so deploy Basic authentication,
 shared bearer tokens, and JWTs over HTTPS.
+
+The configuration types retain their existing serde shape and crate-root
+imports. Their `Debug` representation now redacts credential values; code that
+compared the old debug-formatted output should account for that intentional
+diagnostic change.
+
+Application bearer-token validation continues to reject an exactly empty
+string but does not trim whitespace. The credential parser rejects whitespace
+inside a bearer credential, so a whitespace-only configured token passes
+configuration validation but cannot authenticate a request.
