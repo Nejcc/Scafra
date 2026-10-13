@@ -39,7 +39,7 @@ fn invalid_authentication_configurations_return_safe_validation_errors() {
                 bearer_token: Some(String::new()),
                 ..SecurityConfig::default()
             },
-            "the bearer token must not be empty",
+            "the bearer token must not be empty or whitespace-only",
         ),
         (
             SecurityConfig {
@@ -103,13 +103,93 @@ fn invalid_authentication_configurations_return_safe_validation_errors() {
 }
 
 #[test]
-fn application_bearer_validation_keeps_its_exact_empty_string_behavior() {
-    let whitespace_token = SecurityConfig {
+fn application_bearer_validation_rejects_blank_values_even_with_alternatives() {
+    for token in ["", " ", "   ", "\t", " \t "] {
+        let config = SecurityConfig {
+            enabled: true,
+            bearer_token: Some(token.to_owned()),
+            ..SecurityConfig::default()
+        };
+        assert_eq!(
+            config.validate(),
+            Err("the bearer token must not be empty or whitespace-only"),
+            "blank token {token:?} must fail validation"
+        );
+
+        let config_with_basic = SecurityConfig {
+            enabled: true,
+            bearer_token: Some(token.to_owned()),
+            basic: BasicAuthConfig {
+                username: Some("user".to_owned()),
+                password: Some("password".to_owned()),
+            },
+            ..SecurityConfig::default()
+        };
+        assert_eq!(
+            config_with_basic.validate(),
+            Err("the bearer token must not be empty or whitespace-only"),
+            "a complete Basic authenticator must not preserve blank token {token:?}"
+        );
+
+        let config_with_jwt = SecurityConfig {
+            enabled: true,
+            bearer_token: Some(token.to_owned()),
+            jwt: JwtConfig {
+                enabled: true,
+                secret: Some("jwt-alternative-secret".to_owned()),
+                ..JwtConfig::default()
+            },
+            ..SecurityConfig::default()
+        };
+        assert_eq!(
+            config_with_jwt.validate(),
+            Err("the bearer token must not be empty or whitespace-only"),
+            "a complete JWT authenticator must not preserve blank token {token:?}"
+        );
+    }
+}
+
+#[test]
+fn application_bearer_validation_preserves_valid_token_exactly() {
+    let config = SecurityConfig {
         enabled: true,
-        bearer_token: Some(" \t ".to_owned()),
+        bearer_token: Some("valid-token-sentinel".to_owned()),
         ..SecurityConfig::default()
     };
-    assert_eq!(whitespace_token.validate(), Ok(()));
+
+    assert_eq!(config.validate(), Ok(()));
+    assert_eq!(config.bearer_token.as_deref(), Some("valid-token-sentinel"));
+
+    let jwt_alternative = SecurityConfig {
+        enabled: true,
+        jwt: JwtConfig {
+            enabled: true,
+            secret: Some("jwt-alternative-secret".to_owned()),
+            ..JwtConfig::default()
+        },
+        ..SecurityConfig::default()
+    };
+    assert_eq!(jwt_alternative.validate(), Ok(()));
+}
+
+#[test]
+fn validation_errors_do_not_echo_a_configured_bearer_token() {
+    let config = SecurityConfig {
+        enabled: true,
+        bearer_token: Some("validation-bearer-secret-sentinel".to_owned()),
+        basic: BasicAuthConfig {
+            username: Some(String::new()),
+            password: Some("basic-password".to_owned()),
+        },
+        ..SecurityConfig::default()
+    };
+
+    let error = config
+        .validate()
+        .expect_err("invalid Basic configuration should fail validation");
+    let diagnostic = format!("{error} {config:?}");
+    assert_eq!(error, "basic credentials must not be empty");
+    assert!(!diagnostic.contains("validation-bearer-secret-sentinel"));
 }
 
 #[test]

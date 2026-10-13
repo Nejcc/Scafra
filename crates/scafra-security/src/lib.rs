@@ -15,6 +15,8 @@
 //! JWKS are fetched and cached once for the lifetime of the router state.
 //! Credential-bearing configuration types redact tokens, usernames, passwords,
 //! HMAC secrets, and issuer/JWKS URLs from their `Debug` output.
+//! When application security is enabled, configured bearer tokens must not be
+//! empty or whitespace-only and valid values continue to use exact matching.
 
 mod authentication;
 mod config;
