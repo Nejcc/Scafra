@@ -128,15 +128,8 @@ impl SecurityConfig {
         {
             return Err("basic credentials must not be empty");
         }
-        if self.jwt.enabled
-            && self.jwt.secret.is_none()
-            && self.jwt.issuer_uri.is_none()
-            && self.jwt.jwk_set_uri.is_none()
-        {
-            return Err("JWT requires secret, issuer_uri, or jwk_set_uri");
-        }
-        if self.jwt.enabled && self.jwt.secret.as_deref() == Some("") {
-            return Err("the JWT secret must not be empty");
+        if self.jwt.enabled {
+            validate_jwt_config(&self.jwt)?;
         }
         Ok(())
     }
@@ -145,4 +138,57 @@ impl SecurityConfig {
     pub fn is_permitted(&self, path: &str) -> bool {
         self.permit_all.iter().any(|permitted| permitted == path)
     }
+}
+
+pub(super) fn validate_jwt_config(config: &JwtConfig) -> Result<(), &'static str> {
+    if config.secret.is_none() && config.issuer_uri.is_none() && config.jwk_set_uri.is_none() {
+        return Err("JWT requires secret, issuer_uri, or jwk_set_uri");
+    }
+    if config
+        .secret
+        .as_deref()
+        .is_some_and(|secret| secret.trim().is_empty())
+    {
+        return Err("the JWT secret must not be empty");
+    }
+    if config.secret.is_some() && config.jwk_set_uri.is_some() {
+        return Err("JWT secret cannot be combined with remote JWKS configuration");
+    }
+
+    if config
+        .issuer_uri
+        .as_deref()
+        .is_some_and(|issuer| !valid_provider_url(issuer, true))
+    {
+        return Err("JWT issuer_uri must be a valid HTTP(S) URL");
+    }
+    if config
+        .jwk_set_uri
+        .as_deref()
+        .is_some_and(|uri| !valid_provider_url(uri, false))
+    {
+        return Err("JWT jwk_set_uri must be a valid HTTP(S) URL");
+    }
+    if config
+        .audiences
+        .iter()
+        .any(|audience| audience.trim().is_empty())
+    {
+        return Err("JWT audiences must not contain empty or whitespace-only values");
+    }
+    Ok(())
+}
+
+/// Restrict provider URLs to the HTTP schemes used by the existing client.
+/// Credentials and fragments are never meaningful for discovery or JWKS URLs.
+pub(super) fn valid_provider_url(value: &str, issuer: bool) -> bool {
+    let Ok(url) = reqwest::Url::parse(value) else {
+        return false;
+    };
+    matches!(url.scheme(), "http" | "https")
+        && url.host_str().is_some()
+        && url.username().is_empty()
+        && url.password().is_none()
+        && url.fragment().is_none()
+        && (!issuer || url.query().is_none())
 }

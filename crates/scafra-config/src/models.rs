@@ -139,16 +139,7 @@ impl Config for ScafraConfig {
             });
         }
         if let Err(reason) = self.security.validate() {
-            if reason == "the bearer token must not be empty or whitespace-only" {
-                return Err(ValidationError {
-                    field: "security.bearer_token",
-                    message: "must not be empty or whitespace-only".to_owned(),
-                });
-            }
-            return Err(ValidationError {
-                field: "security",
-                message: "credentials must be configured when security is enabled".to_owned(),
-            });
+            return Err(security_validation_error(reason));
         }
         if self.bootui.port == 0 {
             return Err(ValidationError {
@@ -167,6 +158,45 @@ impl Config for ScafraConfig {
 
     fn validation_details(error: &Self::Error) -> Option<ValidationError> {
         Some(error.clone())
+    }
+}
+
+fn security_validation_error(reason: &'static str) -> ValidationError {
+    let (field, message) = match reason {
+        "the bearer token must not be empty or whitespace-only" => (
+            "security.bearer_token",
+            "must not be empty or whitespace-only",
+        ),
+        "JWT requires secret, issuer_uri, or jwk_set_uri" => (
+            "security.jwt",
+            "requires secret, issuer_uri, or jwk_set_uri",
+        ),
+        "the JWT secret must not be empty" => (
+            "security.jwt.secret",
+            "must not be empty or whitespace-only",
+        ),
+        "JWT secret cannot be combined with remote JWKS configuration" => (
+            "security.jwt",
+            "secret cannot be combined with remote JWKS configuration",
+        ),
+        "JWT issuer_uri must be a valid HTTP(S) URL" => {
+            ("security.jwt.issuer_uri", "must be a valid HTTP(S) URL")
+        }
+        "JWT jwk_set_uri must be a valid HTTP(S) URL" => {
+            ("security.jwt.jwk_set_uri", "must be a valid HTTP(S) URL")
+        }
+        "JWT audiences must not contain empty or whitespace-only values" => (
+            "security.jwt.audiences",
+            "must not contain empty or whitespace-only values",
+        ),
+        _ => (
+            "security",
+            "credentials must be configured when security is enabled",
+        ),
+    };
+    ValidationError {
+        field,
+        message: message.to_owned(),
     }
 }
 

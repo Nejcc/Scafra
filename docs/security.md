@@ -16,7 +16,8 @@ The implementation is organized by responsibility:
 - `middleware` applies those decisions to Axum requests and responses.
 - `authentication` parses shared bearer and Basic credentials.
 - `jwt` validates signatures and standard claims and extracts roles/scopes.
-- `jwks` performs issuer discovery, retrieves RSA key sets, and caches them.
+- `jwks` performs OIDC discovery, retrieves RSA key sets, and refreshes a
+  per-router cache.
 
 These modules are implementation details; callers should continue using the
 crate-root API. Configuration debug output redacts bearer tokens, Basic
@@ -117,8 +118,8 @@ and exact path. Axum distinguishes a trailing slash, so `/status` and
 
 ## JWT roles and scopes
 
-JWT signature and configured issuer, audience, and expiration are validated
-before authorization. Scafra requires an `exp` claim. It reads roles from a
+JWT signature and configured issuer, audience, expiration, and `nbf` are
+validated before authorization. Scafra requires an `exp` claim. It reads roles from a
 string array in `roles` or a string/string array in `role`. It reads scopes
 from a space-separated `scope` string or a string array in `scp`.
 
@@ -170,7 +171,74 @@ security:
 
 For development, `issuer_uri` can be replaced by an HS256 `secret`. A
 `jwk_set_uri` can supply RSA public keys directly. Secrets should come from
-Scafra's environment configuration rather than committed files.
+Scafra's environment configuration rather than committed files. A JWT secret
+cannot be combined with remote JWKS configuration. Provider URLs must be valid
+HTTP or HTTPS URLs without URL credentials; a direct JWKS URL takes precedence
+over discovery when both `issuer_uri` and `jwk_set_uri` are configured.
+Scafra does not support inline or file-based static JWKS configuration.
+
+The current validation contract keeps issuer and audience checks optional:
+`issuer_uri`, when configured, is also the exact expected `iss` value, and a
+non-empty `audiences` list is enforced. Empty audience entries are rejected at
+configuration validation. Direct JWKS configuration can therefore be used
+without issuer discovery, as before, but operators should configure both the
+issuer and audience whenever the provider supplies them.
+
+JWT algorithms are fixed by key mode. Local secrets accept HS256 only. Remote
+JWKS accepts RS256, RS384, and RS512 with RSA keys. A selected RSA JWK must
+match the token algorithm when its `alg` is present, permit signature use when
+`use` is present, and permit verification when `key_ops` is present. The JWT
+header cannot expand these algorithm sets. Signature, `exp`, `nbf`, configured
+issuer, and configured audiences are checked before Scafra extracts any role or
+scope claims.
+
+## JWKS cache and rotation
+
+Each security middleware instance owns its own JWKS cache; separate routers do
+not share provider state. A successful JWKS document is cached for five minutes
+from retrieval. A refresh replaces the complete cached set atomically, so keys
+removed by the provider disappear from the next cache generation.
+
+Scafra loads keys on the first remote JWT request. It refreshes an expired
+cache before using any key from it. An expired cache is never used when refresh
+fails, discovery fails, the provider returns a non-success status, the response
+is too large, or JSON/JWK parsing fails. The request is denied with the existing
+generic `401` response.
+
+When a JWT has an unknown `kid` and the cache is still fresh, Scafra performs
+one refresh attempt. The new full key set is then used to resolve the key; if
+the `kid` is still absent, authentication is denied. Repeated misses have a
+30-second refresh cooldown, including failed provider attempts, to bound
+requests for attacker-chosen `kid` values. Unknown `kid` requests during the
+cooldown are denied without another provider call. Initial-load and expired
+cache refreshes also have a 30-second retry cooldown after a failure.
+
+A key already in a fresh cache can validate tokens until the five-minute cache
+lifetime expires, even if the provider has become unavailable, has removed that
+key, or starts returning malformed documents. This is the rotation overlap
+policy. After expiration, Scafra must
+successfully retrieve and parse a replacement key set before accepting any
+remote-key JWT. If a key disappears or is replaced under the same `kid`, the
+change takes effect at the next successful refresh; a removed or replaced key
+is never accepted from an expired generation.
+
+Discovery and JWKS requests use a two-second connection timeout and a
+five-second total timeout for the discovery-plus-JWKS operation. Each response
+is limited to one mebibyte, redirects are rejected, and no provider retry loop
+is used. Timeouts, non-success responses, malformed metadata, and malformed
+JWKS documents fail closed. Provider response bodies and internal parsing or
+network errors are neither logged nor returned to clients. The async refresh
+gate coalesces simultaneous cache misses and expiry refreshes; it is scoped to
+the router and does not block Tokio worker threads. A waiting request rechecks
+the cache after the refresh completes.
+
+For a planned key rotation, publish the new public key before signing tokens
+with its `kid`, keep the old key available through the maximum five-minute
+cache lifetime and the application's clock-skew window, then remove the old
+key. Scafra does not use provider `Cache-Control` headers, implement periodic
+background refresh, or enforce an IP-range policy for operator-configured
+provider URLs. Only HTTP(S) URLs are accepted. Request timeout and cache policy
+are fixed rather than configurable in this API.
 
 ## Migration impact and limits
 
@@ -186,8 +254,6 @@ failures now return `403` when their signature and standard claims are valid
 but they lack a required scope. Invalid signatures, issuer/audience mismatches,
 missing expiration claims, and expired tokens remain `401`.
 
-JWKS is fetched once and cached for the lifetime of the process. Key rotation
-and cache refresh are outside this issue and are tracked separately by #40.
 Scafra does not fetch user roles from an external directory or interpret
 provider-specific nested role claims; applications must issue the documented
 claim shapes. Scafra does not terminate TLS, so deploy Basic authentication,

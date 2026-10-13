@@ -4,7 +4,7 @@ use axum::{
     routing::get,
     Router,
 };
-use jsonwebtoken::{encode, EncodingKey, Header};
+use jsonwebtoken::{encode, Algorithm, EncodingKey, Header};
 use scafra_security::{layer, JwtConfig, SecurityConfig};
 use serde_json::{json, Value};
 use tower::ServiceExt;
@@ -135,4 +135,48 @@ async fn valid_jwt_without_configured_scope_is_forbidden() {
     assert_eq!(status, StatusCode::FORBIDDEN);
     assert!(!body.contains(JWT_SECRET));
     assert!(!body.contains(&missing_scope));
+}
+
+#[tokio::test]
+async fn direct_middleware_rejects_invalid_jwt_configuration() {
+    let config = SecurityConfig {
+        enabled: true,
+        jwt: JwtConfig {
+            enabled: true,
+            secret: Some(String::new()),
+            issuer_uri: Some(ISSUER.to_owned()),
+            audiences: vec![AUDIENCE.to_owned()],
+            ..JwtConfig::default()
+        },
+        ..SecurityConfig::default()
+    };
+    let router = layer(
+        Router::new().route("/resource", get(|| async { "authorized" })),
+        config,
+    );
+    let empty_secret_token = token(
+        claims(Some(4_000_000_000), ISSUER, AUDIENCE, "profile.read"),
+        "",
+    );
+
+    let (status, body) = send(&router, Some(&empty_secret_token)).await;
+    assert_eq!(status, StatusCode::UNAUTHORIZED);
+    assert!(!body.contains(&empty_secret_token));
+}
+
+#[tokio::test]
+async fn local_secret_mode_rejects_algorithms_other_than_hs256() {
+    let mut header = Header::new(Algorithm::HS512);
+    header.kid = Some("jwt-sentinel-kid".to_owned());
+    let token = encode(
+        &header,
+        &claims(Some(4_000_000_000), ISSUER, AUDIENCE, "profile.read"),
+        &EncodingKey::from_secret(JWT_SECRET.as_bytes()),
+    )
+    .expect("test JWT should encode");
+
+    let (status, body) = send(&router(), Some(&token)).await;
+    assert_eq!(status, StatusCode::UNAUTHORIZED);
+    assert!(!body.contains(&token));
+    assert!(!body.contains(JWT_SECRET));
 }
