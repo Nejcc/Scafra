@@ -13,25 +13,38 @@ pub(super) async fn validate_jwt(
     jwks_cache: &JwksCache,
     token: &str,
 ) -> Option<Principal> {
-    let header = decode_header(token).ok()?;
     let config = &security.jwt;
+    crate::config::validate_jwt_config(config).ok()?;
+    let header = decode_header(token).ok()?;
     let key = if let Some(secret) = config.secret.as_deref() {
         if header.alg != Algorithm::HS256 {
             return None;
         }
         DecodingKey::from_secret(secret.as_bytes())
     } else {
+        // Remote JWKS validation has a deliberately fixed RSA algorithm set.
+        // Never pass a token-selected algorithm through without this check.
+        if !matches!(
+            header.alg,
+            Algorithm::RS256 | Algorithm::RS384 | Algorithm::RS512
+        ) {
+            return None;
+        }
         let kid = header.kid.as_deref()?;
-        let jwks = jwks::get_or_fetch(jwks_cache, config).await?;
-        let key = jwks
-            .keys
-            .iter()
-            .find(|key| key.kid.as_deref() == Some(kid))?;
+        let key = jwks::get_key(jwks_cache, config, kid).await?;
         if key.kty != "RSA"
-            || !matches!(
-                header.alg,
-                Algorithm::RS256 | Algorithm::RS384 | Algorithm::RS512
-            )
+            || key
+                .alg
+                .as_deref()
+                .is_some_and(|algorithm| algorithm != algorithm_name(header.alg))
+            || key
+                .public_key_use
+                .as_deref()
+                .is_some_and(|key_use| key_use != "sig")
+            || key
+                .key_ops
+                .as_ref()
+                .is_some_and(|operations| !operations.iter().any(|operation| operation == "verify"))
         {
             return None;
         }
@@ -41,6 +54,7 @@ pub(super) async fn validate_jwt(
 
     let mut validation = Validation::new(header.alg);
     validation.set_required_spec_claims(&["exp"]);
+    validation.validate_nbf = true;
     if let Some(issuer) = config.issuer_uri.as_deref() {
         validation.set_issuer(&[issuer]);
     }
@@ -49,6 +63,15 @@ pub(super) async fn validate_jwt(
     }
     let data = decode::<Value>(token, &key, &validation).ok()?;
     Some(principal_from_claims(&data.claims))
+}
+
+fn algorithm_name(algorithm: Algorithm) -> &'static str {
+    match algorithm {
+        Algorithm::RS256 => "RS256",
+        Algorithm::RS384 => "RS384",
+        Algorithm::RS512 => "RS512",
+        _ => "",
+    }
 }
 
 fn principal_from_claims(claims: &Value) -> Principal {

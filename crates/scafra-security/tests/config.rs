@@ -103,6 +103,67 @@ fn invalid_authentication_configurations_return_safe_validation_errors() {
 }
 
 #[test]
+fn jwt_provider_configuration_is_validated_without_echoing_urls() {
+    let cases = [
+        (
+            JwtConfig {
+                enabled: true,
+                issuer_uri: Some("   ".to_owned()),
+                ..JwtConfig::default()
+            },
+            "JWT issuer_uri must be a valid HTTP(S) URL",
+        ),
+        (
+            JwtConfig {
+                enabled: true,
+                jwk_set_uri: Some("file:///tmp/provider-uri-sentinel".to_owned()),
+                ..JwtConfig::default()
+            },
+            "JWT jwk_set_uri must be a valid HTTP(S) URL",
+        ),
+        (
+            JwtConfig {
+                enabled: true,
+                secret: Some("hmac-secret".to_owned()),
+                jwk_set_uri: Some("https://keys.test/keys".to_owned()),
+                ..JwtConfig::default()
+            },
+            "JWT secret cannot be combined with remote JWKS configuration",
+        ),
+        (
+            JwtConfig {
+                enabled: true,
+                secret: Some("hmac-secret".to_owned()),
+                audiences: vec![" ".to_owned()],
+                ..JwtConfig::default()
+            },
+            "JWT audiences must not contain empty or whitespace-only values",
+        ),
+    ];
+
+    for (jwt, expected) in cases {
+        let config = SecurityConfig {
+            jwt,
+            ..SecurityConfig::default()
+        };
+        let error = config.validate().expect_err("invalid JWT config must fail");
+        assert_eq!(error, expected);
+        assert!(!format!("{error} {config:?}").contains("provider-uri-sentinel"));
+    }
+
+    let legacy_hmac_with_issuer = SecurityConfig {
+        jwt: JwtConfig {
+            enabled: true,
+            secret: Some("hmac-secret".to_owned()),
+            issuer_uri: Some("https://issuer.test".to_owned()),
+            ..JwtConfig::default()
+        },
+        ..SecurityConfig::default()
+    };
+    assert_eq!(legacy_hmac_with_issuer.validate(), Ok(()));
+}
+
+#[test]
 fn application_bearer_validation_rejects_blank_values_even_with_alternatives() {
     for token in ["", " ", "   ", "\t", " \t "] {
         let config = SecurityConfig {

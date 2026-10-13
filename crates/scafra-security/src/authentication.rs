@@ -4,7 +4,7 @@ use crate::{config::SecurityConfig, jwks::JwksCache, jwt};
 use base64::{engine::general_purpose::STANDARD, Engine as _};
 use std::collections::HashSet;
 
-#[derive(Debug, Default)]
+#[derive(Default)]
 pub(super) struct Principal {
     pub(super) roles: HashSet<String>,
     pub(super) scopes: HashSet<String>,

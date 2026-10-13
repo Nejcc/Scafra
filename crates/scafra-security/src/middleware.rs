@@ -31,7 +31,7 @@ pub fn layer_with_route_policies(
     let state = SecurityState {
         config,
         policies: Arc::new(policies),
-        jwks: Arc::new(tokio::sync::RwLock::new(None)),
+        jwks: JwksCache::new(),
     };
     router.layer(axum::middleware::from_fn(move |request, next| {
         let state = state.clone();

@@ -1,7 +1,7 @@
 use std::ffi::OsString;
 
 use scafra_config::{Config, ConfigLoader, ScafraConfig, ValidationError};
-use scafra_security::BasicAuthConfig;
+use scafra_security::{BasicAuthConfig, JwtConfig};
 
 const ACTUATOR_TOKEN_FIELD: &str = "actuator.security.bearer_token";
 const APPLICATION_TOKEN_FIELD: &str = "security.bearer_token";
@@ -74,6 +74,25 @@ fn application_security_requires_an_authenticator_when_bearer_is_missing() {
     basic_alternative
         .validate()
         .expect("complete Basic credentials remain a valid alternative");
+}
+
+#[test]
+fn invalid_jwt_provider_configuration_reports_a_safe_category() {
+    let sentinel = "provider-url-secret-sentinel";
+    let mut config = ScafraConfig::default();
+    config.security.enabled = true;
+    config.security.jwt = JwtConfig {
+        enabled: true,
+        jwk_set_uri: Some(format!("file:///keys?token={sentinel}")),
+        ..JwtConfig::default()
+    };
+
+    let error = config
+        .validate()
+        .expect_err("unsupported provider schemes must fail startup validation");
+    assert_eq!(error.field, "security.jwt.jwk_set_uri");
+    assert!(error.message.contains("HTTP(S) URL"));
+    assert!(!format!("{error} {error:?}").contains(sentinel));
 }
 
 #[test]

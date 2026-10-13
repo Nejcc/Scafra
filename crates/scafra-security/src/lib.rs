@@ -12,7 +12,10 @@
 //! supported. Authentication and authorization failures are denied; malformed
 //! or unsupported credentials do not grant access. Shared bearer and Basic
 //! credentials authenticate requests but do not provide roles or scopes.
-//! JWKS are fetched and cached once for the lifetime of the router state.
+//! Remote RSA keys are cached per router state for five minutes. Unknown `kid`
+//! values trigger a bounded refresh, with a 30-second cooldown, and expired
+//! keys are never used after a failed refresh. Discovery and JWKS requests have
+//! bounded timeouts and response sizes.
 //! Credential-bearing configuration types redact tokens, usernames, passwords,
 //! HMAC secrets, and issuer/JWKS URLs from their `Debug` output.
 //! When application security is enabled, configured bearer tokens must not be
