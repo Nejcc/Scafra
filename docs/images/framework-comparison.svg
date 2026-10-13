@@ -1,0 +1,60 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1000 570" role="img" aria-labelledby="title desc">
+  <title id="title">Scafra, Quarkus, and Spring Boot HTTP benchmark results</title>
+  <desc id="desc">Grouped horizontal bars compare requests per second and p99 latency at 32 and 128 concurrent connections. Scafra has the highest throughput at both loads and the lowest p99 latency in these runs.</desc>
+  <style>
+    text { font-family: Inter, ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif; fill: #243247; }
+    .title { font-size: 23px; font-weight: 700; }
+    .subtitle { font-size: 13px; fill: #64748b; }
+    .panel-title { font-size: 17px; font-weight: 650; }
+    .group { font-size: 13px; font-weight: 650; }
+    .label { font-size: 12px; }
+    .value { font-size: 11px; font-weight: 650; }
+    .axis { font-size: 10px; fill: #64748b; }
+    .grid { stroke: #dbe3ed; stroke-width: 1; }
+    .panel { fill: #fff; stroke: #dbe3ed; stroke-width: 1.2; }
+    .scafra { fill: #0f9b82; }
+    .quarkus { fill: #5269d6; }
+    .spring { fill: #ed9946; }
+  </style>
+  <rect width="1000" height="570" rx="16" fill="#f7f9fc"/>
+  <text class="title" x="28" y="37">HTTP load test · Scafra vs. Quarkus vs. Spring Boot</text>
+  <text class="subtitle" x="28" y="60">Loopback · HTTP/1.1 keep-alive · each server measured separately</text>
+
+  <rect class="panel" x="20" y="82" width="470" height="455" rx="12"/>
+  <text class="panel-title" x="42" y="115">Throughput</text>
+  <text class="subtitle" x="42" y="136">Requests per second · higher is better</text>
+  <line class="grid" x1="146" y1="158" x2="146" y2="475"/>
+  <line class="grid" x1="266" y1="158" x2="266" y2="475"/>
+  <line class="grid" x1="386" y1="158" x2="386" y2="475"/>
+  <text class="axis" x="146" y="496" text-anchor="middle">0</text>
+  <text class="axis" x="266" y="496" text-anchor="middle">100k</text>
+  <text class="axis" x="386" y="496" text-anchor="middle">200k</text>
+  <text class="group" x="42" y="169">32 connections</text>
+  <text class="label" x="42" y="193">Scafra</text><rect class="scafra" x="146" y="181" width="212" height="16" rx="4"/><text class="value" x="365" y="193">176,792</text>
+  <text class="label" x="42" y="223">Quarkus</text><rect class="quarkus" x="146" y="211" width="195" height="16" rx="4"/><text class="value" x="348" y="223">162,371</text>
+  <text class="label" x="42" y="253">Spring Boot</text><rect class="spring" x="146" y="241" width="132" height="16" rx="4"/><text class="value" x="285" y="253">110,031</text>
+  <text class="group" x="42" y="304">128 connections</text>
+  <text class="label" x="42" y="328">Scafra</text><rect class="scafra" x="146" y="316" width="255" height="16" rx="4"/><text class="value" x="408" y="328">212,338</text>
+  <text class="label" x="42" y="358">Quarkus</text><rect class="quarkus" x="146" y="346" width="226" height="16" rx="4"/><text class="value" x="379" y="358">187,841</text>
+  <text class="label" x="42" y="388">Spring Boot</text><rect class="spring" x="146" y="376" width="153" height="16" rx="4"/><text class="value" x="306" y="388">127,468</text>
+  <text class="subtitle" x="42" y="518">Connection count is the number of concurrent keep-alive clients.</text>
+
+  <rect class="panel" x="510" y="82" width="470" height="455" rx="12"/>
+  <text class="panel-title" x="532" y="115">Tail latency (p99)</text>
+  <text class="subtitle" x="532" y="136">Milliseconds · lower is better</text>
+  <line class="grid" x1="636" y1="158" x2="636" y2="475"/>
+  <line class="grid" x1="756" y1="158" x2="756" y2="475"/>
+  <line class="grid" x1="876" y1="158" x2="876" y2="475"/>
+  <text class="axis" x="636" y="496" text-anchor="middle">0</text>
+  <text class="axis" x="756" y="496" text-anchor="middle">1</text>
+  <text class="axis" x="876" y="496" text-anchor="middle">2</text>
+  <text class="group" x="532" y="169">32 connections</text>
+  <text class="label" x="532" y="193">Scafra</text><rect class="scafra" x="636" y="181" width="52" height="16" rx="4"/><text class="value" x="695" y="193">0.432</text>
+  <text class="label" x="532" y="223">Quarkus</text><rect class="quarkus" x="636" y="211" width="81" height="16" rx="4"/><text class="value" x="724" y="223">0.677</text>
+  <text class="label" x="532" y="253">Spring Boot</text><rect class="spring" x="636" y="241" width="73" height="16" rx="4"/><text class="value" x="716" y="253">0.611</text>
+  <text class="group" x="532" y="304">128 connections</text>
+  <text class="label" x="532" y="328">Scafra</text><rect class="scafra" x="636" y="316" width="160" height="16" rx="4"/><text class="value" x="803" y="328">1.331</text>
+  <text class="label" x="532" y="358">Quarkus</text><rect class="quarkus" x="636" y="346" width="239" height="16" rx="4"/><text class="value" x="882" y="358">1.991</text>
+  <text class="label" x="532" y="388">Spring Boot</text><rect class="spring" x="636" y="376" width="241" height="16" rx="4"/><text class="value" x="884" y="388">2.010</text>
+  <text class="subtitle" x="532" y="518">p99 marks the latency below which 99% of requests completed.</text>
+</svg>

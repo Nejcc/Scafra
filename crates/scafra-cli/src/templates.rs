@@ -31,7 +31,7 @@ pub(crate) fn template_files(
         ""
     };
     let cargo_toml = format!(
-        "[package]\nname = \"{package_name}\"\nversion = \"0.1.0\"\nedition = \"2021\"\n\n[workspace]\n\n[dependencies]\n{scafra_dependency}\n{serde_dependency}\n"
+        "[package]\nname = \"{package_name}\"\nversion = \"0.1.0\"\nedition = \"2021\"\n\n[workspace]\n\n[dependencies]\n{scafra_dependency}\n{serde_dependency}\n[profile.release]\nlto = \"thin\"\ncodegen-units = 1\n"
     );
 
     let mut files = vec![
