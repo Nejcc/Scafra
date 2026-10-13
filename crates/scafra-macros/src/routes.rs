@@ -134,13 +134,10 @@ pub(crate) fn expand_routes(
                     <Self as ::scafra::web::ControllerPrefix>::PREFIX,
                     #path_literal,
                 );
-                router = router.merge(
-                    ::scafra::web::axum::Router::new()
-                        .route(
-                            &path,
-                            ::scafra::web::axum::routing::#routing_function(Self::#handler)
-                                .layer(::scafra::web::axum::Extension(controller.clone())),
-                        ),
+                router = router.route(
+                    &path,
+                    ::scafra::web::axum::routing::#routing_function(Self::#handler)
+                        .layer(::scafra::web::axum::Extension(controller.clone())),
                 );
             });
             metadata.push(quote! {

@@ -4,7 +4,7 @@ use crate::{
     authentication::authenticate,
     config::SecurityConfig,
     jwks::JwksCache,
-    policy::{matching_policy, ResolvedPolicy, RouteAuthorizationMetadata},
+    policy::{matching_policy, ResolvedPolicy, RouteAuthorizationMetadata, RoutePolicyMatcher},
 };
 use axum::{
     http::{Request, StatusCode},
@@ -28,31 +28,42 @@ pub fn layer_with_route_policies(
     if !config.enabled && policies.is_empty() {
         return router;
     }
-    let state = SecurityState {
+    let state = Arc::new(SecurityState {
         config,
-        policies: Arc::new(policies),
+        policies: RoutePolicyMatcher::new(policies),
         jwks: JwksCache::new(),
-    };
+    });
     router.layer(axum::middleware::from_fn(move |request, next| {
-        let state = state.clone();
+        let state = Arc::clone(&state);
         async move { authorize_request(state, request, next).await }
     }))
 }
 
-#[derive(Clone)]
 struct SecurityState {
     config: SecurityConfig,
-    policies: Arc<Vec<RouteAuthorizationMetadata>>,
+    policies: RoutePolicyMatcher,
     jwks: JwksCache,
 }
 
 async fn authorize_request(
-    state: SecurityState,
+    state: Arc<SecurityState>,
     request: Request<axum::body::Body>,
     next: Next,
 ) -> Response {
+    // Keep the security layer installed when generated route metadata exists,
+    // but skip route matching when the application has no protected routes.
+    // In particular, the common disabled-security/inherited-policy case does
+    // not need to inspect every generated route on every request.
+    if !state.config.enabled && !state.policies.has_protected_routes() {
+        return next.run(request).await;
+    }
+
     let path = request.uri().path();
-    let policy = matching_policy(&state.policies, request.method(), path);
+    let policy = if state.policies.is_empty() {
+        None
+    } else {
+        matching_policy(&state.policies, request.method(), path)
+    };
     let is_public = policy.is_some_and(ResolvedPolicy::is_public);
 
     if is_public || state.config.is_permitted(path) && policy.is_none() {

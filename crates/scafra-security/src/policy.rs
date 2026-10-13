@@ -97,8 +97,60 @@ impl ResolvedPolicy {
     }
 }
 
+pub(super) struct RoutePolicyMatcher {
+    policies: Vec<PreparedRoutePolicy>,
+    has_protected_routes: bool,
+}
+
+struct PreparedRoutePolicy {
+    metadata: RouteAuthorizationMetadata,
+    path: String,
+    specificity: Vec<u8>,
+    resolved: ResolvedPolicy,
+    protection_rank: (usize, usize),
+}
+
+impl RoutePolicyMatcher {
+    pub(super) fn new(policies: Vec<RouteAuthorizationMetadata>) -> Self {
+        let policies = policies
+            .into_iter()
+            .filter(|metadata| !is_inert(metadata))
+            .map(|metadata| {
+                let path = join_paths(metadata.prefix, metadata.path);
+                let specificity = path_specificity(&path);
+                let resolved = resolve_policy(&metadata);
+                let protection_rank = (
+                    resolved.controller_role_groups.len() + resolved.route_role_groups.len(),
+                    resolved.controller_scopes.len() + resolved.route_scopes.len(),
+                );
+                PreparedRoutePolicy {
+                    metadata,
+                    path,
+                    specificity,
+                    resolved,
+                    protection_rank,
+                }
+            })
+            .collect::<Vec<_>>();
+        let has_protected_routes = policies.iter().any(|policy| policy.resolved.is_protected);
+
+        Self {
+            policies,
+            has_protected_routes,
+        }
+    }
+
+    pub(super) fn is_empty(&self) -> bool {
+        self.policies.is_empty()
+    }
+
+    pub(super) fn has_protected_routes(&self) -> bool {
+        self.has_protected_routes
+    }
+}
+
 pub(super) fn matching_policy(
-    policies: &[RouteAuthorizationMetadata],
+    matcher: &RoutePolicyMatcher,
     method: &Method,
     path: &str,
 ) -> Option<ResolvedPolicy> {
@@ -107,41 +159,49 @@ pub(super) fn matching_policy(
     } else {
         method.as_str()
     };
-    let matches = policies
-        .iter()
-        .filter(|policy| route_path_matches(policy, path))
-        .collect::<Vec<_>>();
-    if matches.is_empty() {
-        return None;
+
+    let mut method_match: Option<&PreparedRoutePolicy> = None;
+    let mut protected_fallback: Option<(ResolvedPolicy, (usize, usize))> = None;
+    for candidate in &matcher.policies {
+        if !route_path_matches(&candidate.path, path) {
+            continue;
+        }
+
+        if candidate.metadata.method.eq_ignore_ascii_case(method)
+            && method_match.is_none_or(|current| candidate.specificity >= current.specificity)
+        {
+            // Axum prefers static path segments over parameters. Comparing
+            // precomputed specificity preserves that precedence without
+            // allocating a vector for each matching request.
+            method_match = Some(candidate);
+        }
+
+        // A method with no matching route must not bypass a protected path
+        // and then reach a different fallback. Public access stays
+        // method-specific. Keep the same role/scope precedence as before.
+        let resolved = candidate.resolved;
+        if resolved.is_protected {
+            let rank = candidate.protection_rank;
+            if protected_fallback.is_none_or(|(_, current_rank)| rank >= current_rank) {
+                protected_fallback = Some((resolved, rank));
+            }
+        }
     }
 
-    let method_matches = matches
-        .iter()
-        .copied()
-        .filter(|policy| policy.method.eq_ignore_ascii_case(method))
-        .collect::<Vec<_>>();
-    if !method_matches.is_empty() {
-        // Axum prefers static path segments over parameters. Matching the most
-        // specific declaration avoids a broad parameter policy overriding a
-        // more specific static route.
-        return method_matches
-            .into_iter()
-            .max_by(|left, right| path_specificity(left).cmp(&path_specificity(right)))
-            .map(resolve_policy);
-    }
+    method_match
+        .map(|policy| policy.resolved)
+        .or_else(|| protected_fallback.map(|(policy, _)| policy))
+}
 
-    // A method with no matching route must not bypass a protected path and
-    // then reach a different fallback. Public access stays method-specific.
-    matches
-        .into_iter()
-        .map(resolve_policy)
-        .filter(|policy| policy.is_protected)
-        .max_by_key(|policy| {
-            (
-                policy.controller_role_groups.len() + policy.route_role_groups.len(),
-                policy.controller_scopes.len() + policy.route_scopes.len(),
-            )
-        })
+fn is_inert(metadata: &RouteAuthorizationMetadata) -> bool {
+    let controller = metadata.controller_policy;
+    let route = metadata.route_policy;
+    controller.mode == AuthorizationMode::Inherit
+        && route.mode == AuthorizationMode::Inherit
+        && controller.role_groups.is_empty()
+        && controller.required_scopes.is_empty()
+        && route.role_groups.is_empty()
+        && route.required_scopes.is_empty()
 }
 
 fn resolve_policy(metadata: &RouteAuthorizationMetadata) -> ResolvedPolicy {
@@ -184,27 +244,23 @@ fn resolve_policy(metadata: &RouteAuthorizationMetadata) -> ResolvedPolicy {
     }
 }
 
-fn route_path_matches(metadata: &RouteAuthorizationMetadata, request_path: &str) -> bool {
-    let pattern = join_paths(metadata.prefix, metadata.path);
+fn route_path_matches(pattern: &str, request_path: &str) -> bool {
     // Axum distinguishes `/path` from `/path/`. Keep the empty final segment
     // instead of normalizing it away so a public route cannot grant access to
     // a different route (or a fallback) with a trailing slash.
-    let pattern_segments = path_segments(&pattern);
-    let request_segments = path_segments(request_path);
-    let mut request_index = 0;
-    for (pattern_index, segment) in pattern_segments.iter().enumerate() {
+    let mut request_segments = path_segments(request_path);
+    for segment in path_segments(pattern) {
         if let Some(rest) = segment
             .strip_prefix("{*")
             .and_then(|value| value.strip_suffix('}'))
         {
-            let Some(remaining) = request_segments.get(request_index..) else {
+            let Some(first_remaining) = request_segments.next() else {
                 return false;
             };
             return !rest.is_empty()
-                && !remaining.is_empty()
-                && (remaining.len() > 1 || !remaining[0].is_empty());
+                && (!first_remaining.is_empty() || request_segments.next().is_some());
         }
-        let Some(request_segment) = request_segments.get(request_index) else {
+        let Some(request_segment) = request_segments.next() else {
             return false;
         };
         if segment.starts_with('{') {
@@ -214,22 +270,16 @@ fn route_path_matches(metadata: &RouteAuthorizationMetadata, request_path: &str)
         } else if segment != request_segment {
             return false;
         }
-        request_index += 1;
-        if pattern_index + 1 == pattern_segments.len() && request_index != request_segments.len() {
-            return false;
-        }
     }
-    request_index == request_segments.len()
+    request_segments.next().is_none()
 }
 
-fn path_segments(path: &str) -> Vec<&str> {
-    path.strip_prefix('/').unwrap_or(path).split('/').collect()
+fn path_segments(path: &str) -> impl Iterator<Item = &str> {
+    path.strip_prefix('/').unwrap_or(path).split('/')
 }
 
-fn path_specificity(metadata: &RouteAuthorizationMetadata) -> Vec<u8> {
-    let path = join_paths(metadata.prefix, metadata.path);
-    path_segments(&path)
-        .into_iter()
+fn path_specificity(path: &str) -> Vec<u8> {
+    path_segments(path)
         .map(|segment| {
             if segment.starts_with("{*") {
                 0

@@ -225,3 +225,41 @@ async fn most_specific_static_policy_wins_over_a_protected_parameter_route() {
         StatusCode::UNAUTHORIZED
     );
 }
+
+#[tokio::test]
+async fn disabled_security_keeps_the_layer_but_skips_inherited_policy_matching() {
+    let route_policy = RouteAuthorizationMetadata {
+        controller: "inherited_controller",
+        method: "GET",
+        prefix: "/inherited",
+        path: "/route",
+        controller_policy: AuthorizationPolicy::inherit(),
+        route_policy: AuthorizationPolicy::inherit(),
+    };
+    let router = Router::new().route("/inherited/route", get(|| async { "ok" }));
+    let router = layer_with_route_policies(router, SecurityConfig::default(), vec![route_policy]);
+
+    assert_eq!(
+        send(&router, Method::GET, "/inherited/route", None).await,
+        StatusCode::OK
+    );
+}
+
+#[tokio::test]
+async fn disabled_global_security_does_not_skip_explicitly_protected_routes() {
+    let route_policy = RouteAuthorizationMetadata {
+        controller: "protected_controller",
+        method: "GET",
+        prefix: "/protected",
+        path: "/route",
+        controller_policy: AuthorizationPolicy::protected(),
+        route_policy: AuthorizationPolicy::inherit(),
+    };
+    let router = Router::new().route("/protected/route", get(|| async { "secret" }));
+    let router = layer_with_route_policies(router, SecurityConfig::default(), vec![route_policy]);
+
+    assert_eq!(
+        send(&router, Method::GET, "/protected/route", None).await,
+        StatusCode::UNAUTHORIZED
+    );
+}

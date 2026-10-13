@@ -49,6 +49,8 @@
       <sourceFolder url="file://$MODULE_DIR$/crates/scafra/src" isTestSource="false" />
       <sourceFolder url="file://$MODULE_DIR$/crates/scafra/tests" isTestSource="true" />
       <sourceFolder url="file://$MODULE_DIR$/crates/scafra-bootui/tests" isTestSource="true" />
+      <sourceFolder url="file://$MODULE_DIR$/crates/scafra-actuator/tests" isTestSource="true" />
+      <sourceFolder url="file://$MODULE_DIR$/crates/scafra-security/tests" isTestSource="true" />
       <excludeFolder url="file://$MODULE_DIR$/crates/ember-build/tests/fixtures/ambiguous/target" />
       <excludeFolder url="file://$MODULE_DIR$/crates/ember-build/tests/fixtures/cycle/target" />
       <excludeFolder url="file://$MODULE_DIR$/crates/ember-build/tests/fixtures/duplicate/target" />

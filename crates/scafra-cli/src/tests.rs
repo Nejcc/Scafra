@@ -145,6 +145,7 @@ fn generates_each_fixed_starter_shape() {
 
     let web_manifest = fs::read_to_string(root.join("web/Cargo.toml")).unwrap();
     assert!(!web_manifest.contains("serde ="));
+    assert!(web_manifest.contains("[profile.release]\nlto = \"thin\"\ncodegen-units = 1"));
     assert!(
         fs::read_to_string(root.join("web/src/main/controllers/hello_controller.rs"))
             .unwrap()
