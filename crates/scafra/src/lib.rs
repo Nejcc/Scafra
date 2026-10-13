@@ -21,7 +21,10 @@ pub use scafra_macros::{
     bean, component, controller, delete, get, logger, main, post, post_processor, put, repository,
     routes, service, Config,
 };
-pub use scafra_scheduler::{register_scheduled_task, ScheduledTaskConfig, Scheduler};
+pub use scafra_scheduler::{
+    register_scheduled_task, ScheduledTaskConfig, ScheduledTaskRegistration, Scheduler,
+    SchedulerConfigError, SchedulerError, SchedulerMetrics, SchedulerMetricsSnapshot,
+};
 pub use scafra_security::{
     AuthorizationMode, AuthorizationPolicy, BasicAuthConfig, JwtConfig, SecurityConfig,
 };
@@ -64,6 +67,9 @@ pub enum StartupError {
     Graph(#[from] scafra_core::GraphError),
 
     #[error(transparent)]
+    Scheduler(#[from] scafra_scheduler::SchedulerError),
+
+    #[error(transparent)]
     Web(#[from] WebError),
 }
 
@@ -75,6 +81,7 @@ impl StartupError {
             Self::Address(_) => "address",
             Self::Core(_) => "lifecycle",
             Self::Graph(_) => "dependency_graph",
+            Self::Scheduler(_) => "scheduler",
             Self::Web(_) => "web",
         }
     }
@@ -335,9 +342,19 @@ where
     let mut application = Application::new(context);
     application.start()?;
     startup!("application lifecycle started");
-    let scheduler = Scheduler::start(&config.scheduler);
-    startup!(enabled = config.scheduler.enabled, "scheduler initialized");
     let policy = ShutdownPolicy::default();
+    let scheduler = match Scheduler::try_start(&config.scheduler) {
+        Ok(scheduler) => scheduler,
+        Err(error) => {
+            let error = StartupError::from(error);
+            if let Err(cleanup) = application.shutdown_with(ShutdownReason::StartupFailure, policy)
+            {
+                __private::log_cleanup_failure(&StartupError::from(cleanup));
+            }
+            return Err(error);
+        }
+    };
+    startup!(enabled = config.scheduler.enabled, "scheduler initialized");
     let (result, reason) = match if let Some(router) = router {
         scafra_web::serve_router_on_with_policy_and_actuator_and_security_and_request_timeout(
             address,
@@ -370,7 +387,7 @@ where
             (Err(StartupError::from(error.into_web_error())), reason)
         }
     };
-    scheduler.stop();
+    scheduler.shutdown().await;
     let shutdown = application
         .shutdown_with(reason, policy)
         .map_err(StartupError::from);
@@ -465,8 +482,10 @@ pub mod prelude {
         GraphDescriptor, GraphEdgeDescriptor, GraphError, GraphNodeDescriptor, GraphNodeKind,
         GraphPhase, GraphPlan, HealthRegistry, HealthRegistryError, JsonBody, LogLevel,
         LoggingConfig, Properties, ProviderFailure, Result, RouteMetadata, ScafraConfig,
-        ScafraError, SchedulerConfig, ServerConfig, ServerError, ServerOutcome, ShutdownPolicy,
-        ShutdownReason, StartupError, ValidationError, WebError,
+        ScafraError, ScheduledTaskConfig, ScheduledTaskRegistration, Scheduler, SchedulerConfig,
+        SchedulerConfigError, SchedulerError, SchedulerMetrics, SchedulerMetricsSnapshot,
+        ServerConfig, ServerError, ServerOutcome, ShutdownPolicy, ShutdownReason, StartupError,
+        ValidationError, WebError,
     };
     pub use axum::{
         extract::{Json, Path, Query},

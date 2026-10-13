@@ -124,6 +124,31 @@ impl Config for ScafraConfig {
                 message: "must be greater than zero when configured".to_owned(),
             });
         }
+        if let Err(error) = self.scheduler.validate() {
+            let (field, message) = match error {
+                scafra_scheduler::SchedulerConfigError::UnknownTask => (
+                    "scheduler.tasks",
+                    "contains a task that is not registered".to_owned(),
+                ),
+                scafra_scheduler::SchedulerConfigError::ZeroInterval => (
+                    "scheduler.tasks.interval_ms",
+                    "must be greater than zero milliseconds".to_owned(),
+                ),
+                scafra_scheduler::SchedulerConfigError::IntervalTooLarge => (
+                    "scheduler.tasks.interval_ms",
+                    "must not exceed one year".to_owned(),
+                ),
+                scafra_scheduler::SchedulerConfigError::InvalidRegistration => (
+                    "scheduler",
+                    "contains a task registration with an invalid name or interval".to_owned(),
+                ),
+                scafra_scheduler::SchedulerConfigError::DuplicateRegistration => (
+                    "scheduler",
+                    "contains duplicate task registrations".to_owned(),
+                ),
+            };
+            return Err(ValidationError { field, message });
+        }
         if self.actuator.security.enabled
             && self
                 .actuator

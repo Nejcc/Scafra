@@ -8,7 +8,7 @@ mod sources;
 pub use errors::ConfigError;
 pub use models::{BootUiConfig, ScafraConfig, ServerConfig, StartupConfig, ValidationError};
 pub use scafra_foundation::{BacktraceMode, LogLevel, LoggingConfig};
-pub use scafra_scheduler::SchedulerConfig;
+pub use scafra_scheduler::{SchedulerConfig, SchedulerConfigError};
 pub use scafra_security::{JwtConfig, SecurityConfig};
 pub use sources::{load_yaml, Config, ConfigLoader, ConfigProperties, Properties};
 
