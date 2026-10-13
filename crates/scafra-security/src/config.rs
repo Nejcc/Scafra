@@ -10,6 +10,9 @@ pub struct SecurityConfig {
     pub enabled: bool,
     #[serde(default)]
     pub hide_unauthorized: bool,
+    /// Optional application-wide shared bearer credential. When security is
+    /// enabled, configured values must not be empty or whitespace-only. Valid
+    /// tokens are matched exactly and are not normalized.
     #[serde(default)]
     pub bearer_token: Option<String>,
     #[serde(default)]
@@ -100,6 +103,9 @@ impl fmt::Debug for BasicAuthConfig {
 
 impl SecurityConfig {
     /// Check that enabled authentication has a complete, usable configuration.
+    ///
+    /// Empty and whitespace-only configured bearer tokens are rejected. A
+    /// valid bearer token retains its exact configured value for matching.
     pub fn validate(&self) -> Result<(), &'static str> {
         if self.enabled
             && self.bearer_token.is_none()
@@ -108,8 +114,13 @@ impl SecurityConfig {
         {
             return Err("a bearer token or complete basic credentials are required");
         }
-        if self.enabled && self.bearer_token.as_deref() == Some("") {
-            return Err("the bearer token must not be empty");
+        if self.enabled
+            && self
+                .bearer_token
+                .as_deref()
+                .is_some_and(|token| token.trim().is_empty())
+        {
+            return Err("the bearer token must not be empty or whitespace-only");
         }
         if self.enabled
             && ((self.basic.username.is_some() && self.basic.username.as_deref() == Some(""))

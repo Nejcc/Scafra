@@ -138,7 +138,13 @@ impl Config for ScafraConfig {
                     .to_owned(),
             });
         }
-        if self.security.validate().is_err() {
+        if let Err(reason) = self.security.validate() {
+            if reason == "the bearer token must not be empty or whitespace-only" {
+                return Err(ValidationError {
+                    field: "security.bearer_token",
+                    message: "must not be empty or whitespace-only".to_owned(),
+                });
+            }
             return Err(ValidationError {
                 field: "security",
                 message: "credentials must be configured when security is enabled".to_owned(),

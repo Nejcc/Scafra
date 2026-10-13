@@ -39,6 +39,16 @@ Hand-written Axum routes use the application-wide policy; controller and
 method annotations are emitted by Scafra's `#[controller]` and `#[routes]`
 macros.
 
+An application-wide bearer token, when configured, must not be empty or
+whitespace-only. Typed configuration validation rejects it before the router
+is built or the server starts. A valid token is retained as configured and
+matched exactly; Scafra does not trim it. With application security enabled,
+if no bearer token is configured, another complete authenticator is required,
+such as both Basic username and password or a valid JWT configuration. Basic
+Auth and JWT validation keep their existing behavior. Security configuration
+errors and diagnostics do not include configured secrets, and configuration
+`Debug` output redacts them.
+
 ## Controller and route policies
 
 The controller policy is the default for each route. An omitted route policy
@@ -187,8 +197,3 @@ The configuration types retain their existing serde shape and crate-root
 imports. Their `Debug` representation now redacts credential values; code that
 compared the old debug-formatted output should account for that intentional
 diagnostic change.
-
-Application bearer-token validation continues to reject an exactly empty
-string but does not trim whitespace. The credential parser rejects whitespace
-inside a bearer credential, so a whitespace-only configured token passes
-configuration validation but cannot authenticate a request.

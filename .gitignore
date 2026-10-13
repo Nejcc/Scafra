@@ -4,3 +4,4 @@ Cargo.lock
 .env
 .agent/runs/
 .agent/locks/
+.idea
