@@ -427,6 +427,15 @@ Services can register a task with `register_scheduled_task!("cleanup", 60000,
 CleanupService::cleanup)`. The task is disabled unless `scheduler.enabled` is
 `true`; each task can override its interval or be disabled independently.
 
+The scheduler uses a fixed-delay policy: the first run waits one interval, and
+each later run waits one interval after the previous callback finishes. A
+registration never overlaps itself; elapsed intervals are not queued for
+catch-up. Callbacks run on Tokio's blocking pool and cannot be forcibly
+interrupted once running. The standard runner awaits scheduler shutdown before
+application shutdown hooks. See the [scheduler guide](docs/guides/scheduler.md)
+for interval validation, cancellation, metrics, failure handling, and
+distributed-deployment limits.
+
 ## HTTP performance comparison
 
 The following local HTTP load measurements compare Scafra with Spring Boot

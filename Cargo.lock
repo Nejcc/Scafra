@@ -1180,7 +1180,11 @@ version = "0.1.0"
 dependencies = [
  "inventory",
  "serde",
+ "serde_yaml",
+ "thiserror",
  "tokio",
+ "tracing",
+ "tracing-subscriber",
 ]
 
 [[package]]

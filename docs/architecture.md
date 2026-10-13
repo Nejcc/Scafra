@@ -87,6 +87,14 @@ Applications can use `build_router()` or the Axum/Tower re-exports when they
 need a custom server boundary. Replacing the standard runner transfers those
 responsibilities to the application.
 
+The standard runner starts application lifecycle hooks before the optional
+scheduler, then awaits scheduler shutdown before invoking application shutdown
+hooks. Scheduler callbacks are application-scoped, run on Tokio's blocking
+pool, and use a fixed-delay non-overlap policy. The
+[scheduler guide](guides/scheduler.md) documents the cancellation and
+distributed-deployment limits that future lifecycle-managed resources must
+observe.
+
 ## Current implementation
 
 The current implementation includes the HTTP path, project generation,
