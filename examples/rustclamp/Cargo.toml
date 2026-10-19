@@ -1,0 +1,19 @@
+[package]
+name = "scafra-rustclamp-example"
+version = "0.1.0"
+edition = "2024"
+rust-version = "1.96.1"
+publish = false
+
+# Keep prototype dependencies and their higher MSRV outside Scafra's workspace.
+[workspace]
+
+[dependencies]
+scafra = { path = "../../crates/scafra" }
+axum = "0.8.9"
+rustclamp-core = { path = "../../../rustclamp/core" }
+rustclamp-http = { path = "../../../rustclamp/http" }
+tokio = { version = "1", features = ["macros", "rt-multi-thread", "net", "signal", "sync"] }
+
+[dev-dependencies]
+tower = { version = "0.5", features = ["util"] }
