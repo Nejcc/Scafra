@@ -263,6 +263,26 @@ pub struct Scheduler {
     metrics: SchedulerMetrics,
 }
 
+/// A cloneable signal that asks one scheduler instance to stop starting work.
+/// The owner should still call [`Scheduler::shutdown`] to join its task loops.
+#[derive(Clone)]
+pub struct SchedulerShutdownHandle {
+    cancellation: watch::Sender<bool>,
+}
+
+impl fmt::Debug for SchedulerShutdownHandle {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter.debug_struct("SchedulerShutdownHandle").finish()
+    }
+}
+
+impl SchedulerShutdownHandle {
+    /// Requests cooperative cancellation of this scheduler's loops.
+    pub fn request_shutdown(&self) {
+        self.cancellation.send_replace(true);
+    }
+}
+
 impl fmt::Debug for Scheduler {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         formatter
@@ -359,6 +379,14 @@ impl Scheduler {
     /// Returns this scheduler's isolated metrics handle.
     pub fn metrics(&self) -> SchedulerMetrics {
         self.metrics.clone()
+    }
+
+    /// Returns a handle that can request cancellation before the owner awaits
+    /// [`Scheduler::shutdown`]. This is useful while an HTTP server drains.
+    pub fn shutdown_handle(&self) -> SchedulerShutdownHandle {
+        SchedulerShutdownHandle {
+            cancellation: self.cancellation.clone(),
+        }
     }
 
     /// Requests cancellation without waiting for task loops or active

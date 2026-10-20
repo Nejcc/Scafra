@@ -14,12 +14,7 @@ pub(crate) fn expand_bean(
         ));
     }
     let input = syn::parse::<ItemFn>(item)?;
-    if input.sig.asyncness.is_some() {
-        return Err(Error::new_spanned(
-            input.sig.asyncness,
-            "bean providers must be synchronous functions",
-        ));
-    }
+    let asynchronous = input.sig.asyncness.is_some();
     if !input.sig.generics.params.is_empty() {
         return Err(Error::new_spanned(
             &input.sig,
@@ -55,7 +50,7 @@ pub(crate) fn expand_bean(
         ));
     }
     let function = &input.sig.ident;
-    let default_impl = if fallible {
+    let default_impl = if fallible || asynchronous {
         quote! {}
     } else {
         quote! {

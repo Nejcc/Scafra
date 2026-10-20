@@ -1,6 +1,6 @@
 //! Public facade for the Scafra framework.
 
-use std::io::IsTerminal;
+use std::{future::Future, io::IsTerminal, sync::Arc};
 
 pub use scafra_actuator as actuator;
 pub use scafra_actuator::register_health_check;
@@ -24,6 +24,7 @@ pub use scafra_macros::{
 pub use scafra_scheduler::{
     register_scheduled_task, ScheduledTaskConfig, ScheduledTaskRegistration, Scheduler,
     SchedulerConfigError, SchedulerError, SchedulerMetrics, SchedulerMetricsSnapshot,
+    SchedulerShutdownHandle,
 };
 pub use scafra_security::{
     AuthorizationMode, AuthorizationPolicy, BasicAuthConfig, JwtConfig, SecurityConfig,
@@ -32,18 +33,21 @@ pub use scafra_web as web;
 pub use tracing::{debug, error, info, trace, warn};
 
 pub use scafra_core::{
-    Application, ApplicationContext, Bean, BeanPostProcessor, ComponentKind, ComponentMetadata,
-    GraphDescriptor, GraphEdgeDescriptor, GraphError, GraphNodeDescriptor, GraphNodeKind,
-    GraphPhase, GraphPlan, ProviderFailure, ScafraError,
+    Application, ApplicationContext, AsyncResource, AsyncResourceSet, Bean, BeanPostProcessor,
+    ComponentKind, ComponentMetadata, GraphDescriptor, GraphEdgeDescriptor, GraphError,
+    GraphNodeDescriptor, GraphNodeKind, GraphPhase, GraphPlan, ProviderFailure, ScafraError,
 };
 pub use scafra_web::{
     build_router, build_router_with_actuator_and_health_registry,
     build_router_with_actuator_and_health_registry_and_security, join_paths, run_on,
     run_on_with_log_level, serve_on, serve_on_with_actuator, serve_on_with_policy,
     serve_on_with_policy_and_actuator, serve_on_with_policy_and_actuator_and_security,
-    serve_on_with_shutdown, shutdown_channel, AppError, ControllerPrefix, ControllerRegistration,
-    ControllerRoutes, JsonBody, RouteAuthorizationMetadata, RouteMetadata, ServerError,
-    ServerOutcome, ShutdownFuture, ShutdownHandle, ShutdownRequestError, WebError,
+    serve_on_with_policy_and_actuator_and_security_and_request_timeout_and_shutdown_callback,
+    serve_on_with_shutdown,
+    serve_router_on_with_policy_and_actuator_and_security_and_request_timeout_and_shutdown_callback,
+    shutdown_channel, AppError, ControllerPrefix, ControllerRegistration, ControllerRoutes,
+    JsonBody, RouteAuthorizationMetadata, RouteMetadata, ServerError, ServerOutcome,
+    ShutdownFuture, ShutdownHandle, ShutdownRequestError, WebError,
 };
 
 pub type Result<T> = std::result::Result<T, AppError>;
@@ -220,6 +224,16 @@ pub mod __private {
     /// contain application-provided messages or secret-bearing configuration.
     pub fn log_startup_failure(error: &crate::StartupError) {
         match error {
+            crate::StartupError::Graph(scafra_core::GraphError::ProviderFailure(failure)) => {
+                log_resource_cleanup_failures(failure.cleanup_failures());
+                foundation::error!(
+                    error_kind = error.kind(),
+                    provider = failure.provider(),
+                    operation = failure.operation(),
+                    cleanup_failure_count = failure.cleanup_failures().len(),
+                    "application_startup_failed"
+                );
+            }
             crate::StartupError::Web(scafra_web::WebError::Bind { address, source }) => {
                 foundation::error!(
                     error_kind = error.kind(),
@@ -256,7 +270,24 @@ pub mod __private {
     /// lifecycle messages.
     pub fn log_cleanup_failure(error: &crate::StartupError) {
         let failure_count = match error {
-            crate::StartupError::Core(error) => error.lifecycle_cleanup_failures().len(),
+            crate::StartupError::Core(error) => {
+                let failures = error.lifecycle_cleanup_failures();
+                for failure in failures {
+                    let participant = failure.participant();
+                    foundation::error!(
+                        participant = participant.name(),
+                        source = participant.source(),
+                        phase = failure.phase().name(),
+                        "application_lifecycle_cleanup_failed"
+                    );
+                }
+                failures.len()
+            }
+            crate::StartupError::Graph(error) => {
+                let failures = error.cleanup_failures();
+                log_resource_cleanup_failures(failures);
+                failures.len()
+            }
             _ => 0,
         };
         foundation::error!(
@@ -264,6 +295,17 @@ pub mod __private {
             failure_count,
             "application_cleanup_failed"
         );
+    }
+
+    fn log_resource_cleanup_failures(failures: &[scafra_core::ProviderFailure]) {
+        for failure in failures {
+            foundation::error!(
+                provider = failure.provider(),
+                operation = failure.operation(),
+                source = failure.source_location(),
+                "application_resource_cleanup_failed"
+            );
+        }
     }
 }
 
@@ -284,7 +326,7 @@ fn server_shutdown_reason(error: &ServerError) -> ShutdownReason {
 
 /// Starts the standard Scafra server using the default local address.
 pub async fn run() -> std::result::Result<(), StartupError> {
-    run_inner(|_| Ok(None)).await
+    run_inner(|_| async { Ok((None, ())) }).await
 }
 
 /// Starts Scafra with a router composed from the application's typed graph.
@@ -294,12 +336,37 @@ pub async fn run_with_router<F>(build_router: F) -> std::result::Result<(), Star
 where
     F: FnOnce(&ScafraConfig) -> std::result::Result<axum::Router, StartupError>,
 {
-    run_inner(|config| build_router(config).map(Some)).await
+    run_inner(|config| {
+        let result = build_router(&config).map(|router| (Some(router), ()));
+        async move { result }
+    })
+    .await
 }
 
-async fn run_inner<F>(build_router: F) -> std::result::Result<(), StartupError>
+/// Starts Scafra after asynchronously composing a router and its typed resource
+/// set. The set remains owned by the application until HTTP requests, the
+/// scheduler, and lifecycle hooks have shut down.
+pub async fn run_with_resources<F, Fut, R>(
+    build_application: F,
+) -> std::result::Result<(), StartupError>
 where
-    F: FnOnce(&ScafraConfig) -> std::result::Result<Option<axum::Router>, StartupError>,
+    F: FnOnce(ScafraConfig) -> Fut,
+    Fut: Future<Output = std::result::Result<(axum::Router, R), StartupError>>,
+    R: AsyncResourceSet,
+{
+    run_inner(|config| async move {
+        build_application(config)
+            .await
+            .map(|(router, resources)| (Some(router), resources))
+    })
+    .await
+}
+
+async fn run_inner<F, Fut, R>(build_runtime: F) -> std::result::Result<(), StartupError>
+where
+    F: FnOnce(ScafraConfig) -> Fut,
+    Fut: Future<Output = std::result::Result<(Option<axum::Router>, R), StartupError>>,
+    R: AsyncResourceSet,
 {
     let loader = match std::env::var("SCAFRA_PROFILE") {
         Ok(profile) => ConfigLoader::new().profile(profile),
@@ -333,14 +400,23 @@ where
     let address = format!("{}:{}", config.server.host, config.server.port)
         .parse()
         .map_err(|error: std::net::AddrParseError| StartupError::Address(error.to_string()))?;
-    let router = build_router(&config)?;
+    let (router, resources) = build_runtime(config.clone()).await?;
     let context = ApplicationContext::discover();
     startup!(
         components = context.metadata().len(),
         "application components discovered"
     );
     let mut application = Application::new(context);
-    application.start()?;
+    if let Err(error) = application.start() {
+        resources.request_shutdown(ShutdownReason::StartupFailure);
+        if let Err(cleanup) = resources
+            .shutdown(ShutdownReason::StartupFailure, ShutdownPolicy::default())
+            .await
+        {
+            __private::log_cleanup_failure(&StartupError::from(cleanup));
+        }
+        return Err(StartupError::from(error));
+    }
     startup!("application lifecycle started");
     let policy = ShutdownPolicy::default();
     let scheduler = match Scheduler::try_start(&config.scheduler) {
@@ -351,12 +427,26 @@ where
             {
                 __private::log_cleanup_failure(&StartupError::from(cleanup));
             }
+            resources.request_shutdown(ShutdownReason::StartupFailure);
+            if let Err(cleanup) = resources
+                .shutdown(ShutdownReason::StartupFailure, policy)
+                .await
+            {
+                __private::log_cleanup_failure(&StartupError::from(cleanup));
+            }
             return Err(error);
         }
     };
     startup!(enabled = config.scheduler.enabled, "scheduler initialized");
+    let resources = Arc::new(resources);
+    let scheduler_shutdown = scheduler.shutdown_handle();
+    let resources_shutdown = Arc::clone(&resources);
+    let on_shutdown_requested = move |reason| {
+        scheduler_shutdown.request_shutdown();
+        resources_shutdown.request_shutdown(reason);
+    };
     let (result, reason) = match if let Some(router) = router {
-        scafra_web::serve_router_on_with_policy_and_actuator_and_security_and_request_timeout(
+        scafra_web::serve_router_on_with_policy_and_actuator_and_security_and_request_timeout_and_shutdown_callback(
             address,
             policy,
             config.actuator,
@@ -366,10 +456,11 @@ where
                 .request_timeout_seconds
                 .map(std::time::Duration::from_secs),
             router,
+            on_shutdown_requested,
         )
         .await
     } else {
-        scafra_web::serve_on_with_policy_and_actuator_and_security_and_request_timeout(
+        scafra_web::serve_on_with_policy_and_actuator_and_security_and_request_timeout_and_shutdown_callback(
             address,
             policy,
             config.actuator,
@@ -378,6 +469,7 @@ where
                 .server
                 .request_timeout_seconds
                 .map(std::time::Duration::from_secs),
+            on_shutdown_requested,
         )
         .await
     } {
@@ -388,17 +480,32 @@ where
         }
     };
     scheduler.shutdown().await;
+    resources.request_shutdown(reason);
     let shutdown = application
         .shutdown_with(reason, policy)
         .map_err(StartupError::from);
-    match (result, shutdown) {
-        (Err(error), Err(cleanup)) => {
-            __private::log_cleanup_failure(&cleanup);
+    let resource_shutdown = resources
+        .shutdown(reason, policy)
+        .await
+        .map_err(StartupError::from);
+    match (result, shutdown, resource_shutdown) {
+        (Err(error), app_cleanup, resource_cleanup) => {
+            if let Err(cleanup) = app_cleanup {
+                __private::log_cleanup_failure(&cleanup);
+            }
+            if let Err(cleanup) = resource_cleanup {
+                __private::log_cleanup_failure(&cleanup);
+            }
             Err(error)
         }
-        (Err(error), Ok(())) => Err(error),
-        (Ok(()), Err(error)) => Err(error),
-        (Ok(()), Ok(())) => Ok(()),
+        (Ok(()), Err(error), resource_cleanup) => {
+            if let Err(cleanup) = resource_cleanup {
+                __private::log_cleanup_failure(&cleanup);
+            }
+            Err(error)
+        }
+        (Ok(()), Ok(()), Err(error)) => Err(error),
+        (Ok(()), Ok(()), Ok(())) => Ok(()),
     }
 }
 
@@ -476,16 +583,16 @@ pub mod prelude {
         bean, build_router, component, controller, debug, delete, error, get, info, logger, post,
         post_processor, put, register_health_check, register_scheduled_task, repository, routes,
         service, startup, trace, warn, ActuatorConfig, AppError, Application, ApplicationContext,
-        AuthorizationMode, AuthorizationPolicy, BacktraceMode, Bean, BeanPostProcessor,
-        BootUiConfig, ComponentKind, ComponentMetadata, Config, ConfigError, ConfigLoader,
-        ConfigProperties, ControllerPrefix, ControllerRegistration, ControllerRoutes,
-        GraphDescriptor, GraphEdgeDescriptor, GraphError, GraphNodeDescriptor, GraphNodeKind,
-        GraphPhase, GraphPlan, HealthRegistry, HealthRegistryError, JsonBody, LogLevel,
-        LoggingConfig, Properties, ProviderFailure, Result, RouteMetadata, ScafraConfig,
+        AsyncResource, AsyncResourceSet, AuthorizationMode, AuthorizationPolicy, BacktraceMode,
+        Bean, BeanPostProcessor, BootUiConfig, ComponentKind, ComponentMetadata, Config,
+        ConfigError, ConfigLoader, ConfigProperties, ControllerPrefix, ControllerRegistration,
+        ControllerRoutes, GraphDescriptor, GraphEdgeDescriptor, GraphError, GraphNodeDescriptor,
+        GraphNodeKind, GraphPhase, GraphPlan, HealthRegistry, HealthRegistryError, JsonBody,
+        LogLevel, LoggingConfig, Properties, ProviderFailure, Result, RouteMetadata, ScafraConfig,
         ScafraError, ScheduledTaskConfig, ScheduledTaskRegistration, Scheduler, SchedulerConfig,
         SchedulerConfigError, SchedulerError, SchedulerMetrics, SchedulerMetricsSnapshot,
-        ServerConfig, ServerError, ServerOutcome, ShutdownPolicy, ShutdownReason, StartupError,
-        ValidationError, WebError,
+        SchedulerShutdownHandle, ServerConfig, ServerError, ServerOutcome, ShutdownPolicy,
+        ShutdownReason, StartupError, ValidationError, WebError,
     };
     pub use axum::{
         extract::{Json, Path, Query},

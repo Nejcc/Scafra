@@ -164,6 +164,8 @@ async fn execution_cancellation_failure_and_instance_contracts_are_deterministic
     tokio::time::advance(std::time::Duration::from_millis(100)).await;
     assert_eq!(CANCELLED_RUNS.load(Ordering::SeqCst), 0);
     let sleeping = Scheduler::try_start(&config_for("cancelled_run", 10)).unwrap();
+    let shutdown_handle = sleeping.shutdown_handle();
+    shutdown_handle.request_shutdown();
     tokio::task::yield_now().await;
     sleeping.shutdown().await;
     tokio::time::advance(std::time::Duration::from_millis(100)).await;

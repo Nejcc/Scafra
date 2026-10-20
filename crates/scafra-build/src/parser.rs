@@ -109,11 +109,31 @@ fn parse_graph_inner(
     });
 
     match graph_order(&node_names, &edges) {
-        Ok(order) => Ok(Ok(GraphModel {
-            nodes,
-            edges,
-            order,
-        })),
+        Ok(order) => {
+            let resource_ownership_errors = nodes
+                .iter()
+                .filter(|node| node.asynchronous)
+                .flat_map(|node| {
+                    edges
+                        .iter()
+                        .filter(move |edge| edge.dependency == node.output && !edge.shared)
+                        .map(move |edge| {
+                            format!(
+                                "Scafra async bean `{}` at {} must be injected as `Arc<{}>` by `{}` so the application retains ownership for shutdown",
+                                node.provider, node.source, node.output, edge.consumer
+                            )
+                        })
+                })
+                .collect::<Vec<_>>();
+            if !resource_ownership_errors.is_empty() {
+                return Ok(Err(resource_ownership_errors));
+            }
+            Ok(Ok(GraphModel {
+                nodes,
+                edges,
+                order,
+            }))
+        }
         Err(errors) => Ok(Err(errors)),
     }
 }
@@ -183,6 +203,7 @@ fn parse_struct_node(
         dependencies,
         provider_expression: format!("{output_type}::new"),
         fallible: false,
+        asynchronous: false,
     }))
 }
 
@@ -205,12 +226,7 @@ fn parse_bean_node(
             item.sig.ident
         ));
     }
-    if item.sig.asyncness.is_some() {
-        return Err(format!(
-            "Scafra graph bean `{}` at {source} must be synchronous",
-            item.sig.ident
-        ));
-    }
+    let asynchronous = item.sig.asyncness.is_some();
     if !item.sig.generics.params.is_empty() {
         return Err(format!(
             "Scafra graph bean `{}` at {source} must not be generic",
@@ -261,6 +277,7 @@ fn parse_bean_node(
         dependencies,
         provider_expression: provider,
         fallible,
+        asynchronous,
     }))
 }
 

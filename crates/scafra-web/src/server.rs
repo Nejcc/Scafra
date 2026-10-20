@@ -238,9 +238,35 @@ pub async fn serve_on_with_policy_and_actuator_and_security_and_request_timeout(
     security: scafra_security::SecurityConfig,
     request_timeout: Option<Duration>,
 ) -> Result<ServerOutcome, ServerError> {
+    serve_on_with_policy_and_actuator_and_security_and_request_timeout_and_shutdown_callback(
+        address,
+        policy,
+        actuator,
+        security,
+        request_timeout,
+        |_| {},
+    )
+    .await
+}
+
+/// Serves the registered application and calls `on_shutdown_requested` as
+/// soon as a shutdown signal arrives, before HTTP request draining begins.
+pub async fn serve_on_with_policy_and_actuator_and_security_and_request_timeout_and_shutdown_callback<
+    F,
+>(
+    address: SocketAddr,
+    policy: ShutdownPolicy,
+    actuator: scafra_actuator::ActuatorConfig,
+    security: scafra_security::SecurityConfig,
+    request_timeout: Option<Duration>,
+    on_shutdown_requested: F,
+) -> Result<ServerOutcome, ServerError>
+where
+    F: FnOnce(ShutdownReason) + Send + 'static,
+{
     serve_on_with_signal(
         address,
-        shutdown_signal(),
+        shutdown_with_callback(shutdown_signal(), on_shutdown_requested),
         policy,
         actuator,
         security,
@@ -260,9 +286,37 @@ pub async fn serve_router_on_with_policy_and_actuator_and_security_and_request_t
     request_timeout: Option<Duration>,
     router: axum::Router,
 ) -> Result<ServerOutcome, ServerError> {
+    serve_router_on_with_policy_and_actuator_and_security_and_request_timeout_and_shutdown_callback(
+        address,
+        policy,
+        actuator,
+        security,
+        request_timeout,
+        router,
+        |_| {},
+    )
+    .await
+}
+
+/// Serves a typed application router and notifies lifecycle owners as soon as
+/// shutdown begins, before Axum drains active requests.
+pub async fn serve_router_on_with_policy_and_actuator_and_security_and_request_timeout_and_shutdown_callback<
+    F,
+>(
+    address: SocketAddr,
+    policy: ShutdownPolicy,
+    actuator: scafra_actuator::ActuatorConfig,
+    security: scafra_security::SecurityConfig,
+    request_timeout: Option<Duration>,
+    router: axum::Router,
+    on_shutdown_requested: F,
+) -> Result<ServerOutcome, ServerError>
+where
+    F: FnOnce(ShutdownReason) + Send + 'static,
+{
     serve_on_with_signal(
         address,
-        shutdown_signal(),
+        shutdown_with_callback(shutdown_signal(), on_shutdown_requested),
         policy,
         actuator,
         security,
@@ -270,6 +324,21 @@ pub async fn serve_router_on_with_policy_and_actuator_and_security_and_request_t
         Some(router),
     )
     .await
+}
+
+async fn shutdown_with_callback<F, C>(shutdown: F, callback: C) -> Result<ShutdownReason, WebError>
+where
+    F: Future<Output = Result<ShutdownReason, WebError>> + Send + 'static,
+    C: FnOnce(ShutdownReason) + Send + 'static,
+{
+    let result = shutdown.await;
+    callback(
+        result
+            .as_ref()
+            .copied()
+            .unwrap_or(ShutdownReason::RuntimeFailure),
+    );
+    result
 }
 
 async fn serve_on_with_signal<F>(
@@ -412,4 +481,108 @@ fn signal_error(name: &str, error: std::io::Error) -> WebError {
         error.kind(),
         format!("failed to install {name} handler: {error}"),
     ))
+}
+
+#[cfg(test)]
+mod shutdown_callback_tests {
+    use super::*;
+    use axum::{extract::State, routing::get, Router};
+    use std::{sync::Arc, time::Duration};
+    use tokio::{
+        io::{AsyncReadExt, AsyncWriteExt},
+        net::{TcpListener, TcpStream},
+        sync::{oneshot, Notify},
+    };
+
+    #[derive(Clone)]
+    struct DrainState {
+        started: Arc<Notify>,
+        release: Arc<Notify>,
+    }
+
+    async fn blocked_request(State(state): State<DrainState>) -> &'static str {
+        state.started.notify_one();
+        state.release.notified().await;
+        "drained"
+    }
+
+    async fn connect_when_ready(address: SocketAddr) -> TcpStream {
+        tokio::time::timeout(Duration::from_secs(2), async {
+            loop {
+                match TcpStream::connect(address).await {
+                    Ok(stream) => return stream,
+                    Err(error) if error.kind() == std::io::ErrorKind::ConnectionRefused => {
+                        tokio::task::yield_now().await;
+                    }
+                    Err(error) => panic!("server connection failed: {error}"),
+                }
+            }
+        })
+        .await
+        .expect("server should bind within the test deadline")
+    }
+
+    #[tokio::test]
+    async fn shutdown_callback_runs_before_http_request_drain_completes() {
+        let reservation = TcpListener::bind("127.0.0.1:0")
+            .await
+            .expect("test should bind loopback");
+        let address = reservation.local_addr().expect("listener address exists");
+        drop(reservation);
+
+        let state = DrainState {
+            started: Arc::new(Notify::new()),
+            release: Arc::new(Notify::new()),
+        };
+        let router = Router::new()
+            .route("/drain", get(blocked_request))
+            .with_state(state.clone());
+        let (trigger_sender, trigger_receiver) = oneshot::channel();
+        let shutdown = async move {
+            Ok(trigger_receiver
+                .await
+                .unwrap_or(ShutdownReason::RuntimeFailure))
+        };
+        let (callback_sender, callback_receiver) = oneshot::channel();
+        let callback = move |reason| {
+            let _ = callback_sender.send(reason);
+        };
+        let server = tokio::spawn(serve_on_with_signal(
+            address,
+            shutdown_with_callback(shutdown, callback),
+            ShutdownPolicy::new(Duration::from_secs(2), true),
+            scafra_actuator::ActuatorConfig::default(),
+            scafra_security::SecurityConfig::default(),
+            None,
+            Some(router),
+        ));
+
+        let mut connection = connect_when_ready(address).await;
+        connection
+            .write_all(b"GET /drain HTTP/1.1\r\nHost: localhost\r\nConnection: close\r\n\r\n")
+            .await
+            .expect("request should be written");
+        state.started.notified().await;
+        trigger_sender
+            .send(ShutdownReason::Signal)
+            .expect("server should still await its shutdown signal");
+
+        assert_eq!(callback_receiver.await, Ok(ShutdownReason::Signal));
+        assert!(
+            !server.is_finished(),
+            "the callback should run while an active request is still draining"
+        );
+
+        state.release.notify_one();
+        let mut response = Vec::new();
+        connection
+            .read_to_end(&mut response)
+            .await
+            .expect("drained response should be readable");
+        assert!(String::from_utf8_lossy(&response).ends_with("drained"));
+        server
+            .await
+            .expect("server task should join")
+            .expect("request should drain successfully");
+    }
 }
