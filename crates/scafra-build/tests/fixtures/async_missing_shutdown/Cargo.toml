@@ -1,0 +1,10 @@
+[package]
+name = "scafra-graph-async-missing-shutdown-fixture"
+version = "0.1.0"
+edition = "2021"
+publish = false
+
+[workspace]
+
+[dependencies]
+scafra = { path = "../../../../scafra" }

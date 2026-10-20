@@ -16,8 +16,8 @@ pub use lifecycle::{
 };
 pub use registration::__private;
 pub use registration::{
-    Bean, BeanPostProcessor, ComponentKind, ComponentMetadata, ComponentRegistration,
-    OptionalExtensionRegistration, PostProcessorRegistration, Service,
+    AsyncResource, AsyncResourceSet, Bean, BeanPostProcessor, ComponentKind, ComponentMetadata,
+    ComponentRegistration, OptionalExtensionRegistration, PostProcessorRegistration, Service,
 };
 
 #[cfg(test)]

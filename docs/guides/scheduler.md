@@ -75,11 +75,17 @@ wait for all scheduler loops and active callbacks. `shutdown` has no timeout:
 it waits indefinitely if a synchronous callback never returns.
 
 Scafra's standard runner starts the scheduler after application lifecycle
-startup, waits for scheduler shutdown after the server stops, and only then
-runs application shutdown hooks. A scheduler startup error triggers
-application shutdown cleanup. This ordering gives future async providers and
-background resources a clear ownership boundary for lifecycle work such as
-issue #41.
+startup. When shutdown is requested, it signals the scheduler before HTTP
+request draining begins. After the server drains, the runner waits for active
+scheduler callbacks, runs application shutdown hooks, and then shuts down
+async resources. A scheduler startup error triggers application and resource
+cleanup.
+
+The request signal does not interrupt an active synchronous callback. The
+runner still owns its join handle and waits for that callback before resource
+teardown, so a callback that never returns can delay shutdown indefinitely.
+`ShutdownPolicy` bounds HTTP request draining; a resource that needs a bounded
+shutdown must apply the supplied policy in its own `AsyncResource` teardown.
 
 Scheduler ownership is local to a process. Multiple processes or replicas
 each execute their own callbacks. Use an external lease, leader election, or

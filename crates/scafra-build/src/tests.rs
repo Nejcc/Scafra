@@ -618,11 +618,6 @@ fn graph_parser_reports_source_aware_declaration_errors() {
             true,
         ),
         (
-            r#"pub struct Value; #[bean] pub async fn value() -> Value { Value }"#,
-            "must be synchronous",
-            true,
-        ),
-        (
             r#"pub struct Value; #[bean] pub fn value<T>() -> Value { Value }"#,
             "must not be generic",
             true,
@@ -665,6 +660,50 @@ fn graph_parser_reports_source_aware_declaration_errors() {
 }
 
 #[test]
+fn graph_parser_accepts_async_providers_and_requires_shared_resource_ownership() {
+    let source = r#"
+        pub struct Pool;
+        #[bean]
+        pub async fn pool() -> Result<Pool, ProviderError> { Ok(Pool) }
+        pub struct ProviderError;
+        #[service]
+        pub struct Consumer { pool: Pool }
+    "#;
+    let file = SourceFile {
+        module_path: vec!["fixture".to_owned()],
+        source_label: "src/fixture.rs".to_owned(),
+        syntax: syn::parse_file(source).unwrap(),
+    };
+    let errors = match parse_graph(&[file]).unwrap() {
+        Ok(_) => panic!("an owned async resource dependency must be rejected"),
+        Err(errors) => errors,
+    };
+    assert!(errors.iter().any(|error| error.contains("Arc<Pool>")));
+
+    let shared_source = source.replace("pool: Pool", "pool: Arc<Pool>");
+    let file = SourceFile {
+        module_path: vec!["fixture".to_owned()],
+        source_label: "src/fixture.rs".to_owned(),
+        syntax: syn::parse_file(&shared_source).unwrap(),
+    };
+    let graph = parse_graph(&[file]).unwrap().unwrap();
+    let resource = graph
+        .nodes
+        .iter()
+        .find(|node| node.output == "Pool")
+        .expect("async provider should be a graph node");
+    assert!(resource.asynchronous);
+    assert!(resource.fallible);
+    assert_eq!(
+        graph
+            .order
+            .last()
+            .map(|index| graph.nodes[*index].output.as_str()),
+        Some("Consumer")
+    );
+}
+
+#[test]
 fn rendered_graph_contains_typed_calls_and_provider_context() {
     let syntax = syn::parse_file(
         r#"
@@ -687,7 +726,7 @@ fn rendered_graph_contains_typed_calls_and_provider_context() {
     let mut generated = String::new();
     render_graph(&graph, &mut generated);
     assert!(generated.contains("pub mod __scafra_graph"));
-    assert!(generated.contains("unwrap_or_else(crate::providers::prefix)"));
+    assert!(generated.contains("crate::providers::prefix()"));
     assert!(generated.contains("crate::providers::suffix(node_0)"));
     assert!(generated.contains("GraphPhase::Construction"));
     assert!(generated.contains("src/providers.rs:8"));
@@ -720,10 +759,10 @@ fn rendered_graph_composes_services_into_injected_controllers() {
     let mut generated = String::new();
     render_graph(&graph, &mut generated);
     assert!(generated.contains("crate::app::GreetingService::new(node_"));
-    assert!(generated.contains("__scafra_register_routes_with(router, self.node_"));
+    assert!(generated.contains("__scafra_register_routes_with(router, node_"));
     assert!(generated.contains("ControllerRoutes>::route_metadata()"));
     assert!(generated.contains("pub fn build_router_with_health_registry"));
-    assert!(generated.contains("router_with_health_registry(actuator, health_registry)?"));
+    assert!(generated.contains("router_with_health_registry(actuator, health_registry)"));
 }
 
 #[test]
@@ -759,7 +798,44 @@ fn rendered_graph_shares_arc_dependencies_and_supports_non_default_consumers() {
     assert!(generated.contains("Arc<crate::app::First>"));
     assert!(generated.contains("::std::sync::Arc::new(crate::app::First::new(node_3.clone()))"));
     assert!(generated.contains("FirstController::new(node_0.clone())"));
-    assert!(generated.contains("__scafra_register_routes_with(router, self.node_"));
+    assert!(generated.contains("__scafra_register_routes_with(router, node_"));
+}
+
+#[test]
+fn rendered_async_graph_retains_and_rolls_back_resources_in_dependency_order() {
+    let source = r#"
+        use std::sync::Arc;
+        pub struct Pool;
+        pub struct Worker;
+        pub struct ProviderError;
+        #[bean]
+        pub async fn pool() -> Result<Pool, ProviderError> { Ok(Pool) }
+        #[bean]
+        pub async fn worker(pool: Arc<Pool>) -> Result<Worker, ProviderError> { Ok(Worker) }
+    "#;
+    let file = SourceFile {
+        module_path: vec!["providers".to_owned()],
+        source_label: "src/main/providers.rs".to_owned(),
+        syntax: syn::parse_file(source).unwrap(),
+    };
+    let graph = parse_graph(&[file]).unwrap().unwrap();
+    let mut generated = String::new();
+    render_graph(&graph, &mut generated);
+
+    assert!(generated.contains("pub async fn compose_async"));
+    assert!(generated.contains("pub fn build_router_and_resources"));
+    assert!(!generated.contains("pub fn build_router(self"));
+    assert!(generated.contains("crate::providers::pool().await"));
+    assert!(generated.contains("crate::providers::worker(node_0.clone()).await"));
+    assert!(generated.contains("managed_0: node_0.clone()"));
+    assert!(generated.contains("managed_1: node_1"));
+    let shutdown = generated
+        .split("impl ::scafra::core::AsyncResourceSet")
+        .nth(1)
+        .expect("resource set implementation should be generated");
+    assert!(shutdown.find("worker").unwrap() < shutdown.find("pool").unwrap());
+    assert!(generated.contains("ProviderFailure::cleanup_failure"));
+    assert!(generated.contains("GraphError::startup_failure(original, cleanup_failures)"));
 }
 
 struct TestBuildExtension {

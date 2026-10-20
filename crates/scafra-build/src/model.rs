@@ -28,6 +28,7 @@ pub(crate) struct GraphNode {
     pub(crate) dependencies: Vec<GraphDependency>,
     pub(crate) provider_expression: String,
     pub(crate) fallible: bool,
+    pub(crate) asynchronous: bool,
 }
 
 pub(crate) struct GraphDependency {

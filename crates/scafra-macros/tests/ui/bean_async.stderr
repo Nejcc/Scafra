@@ -1,5 +1,0 @@
-error: bean providers must be synchronous functions
- --> tests/ui/bean_async.rs:4:1
-  |
-4 | async fn asynchronous_provider() -> String {
-  | ^^^^^

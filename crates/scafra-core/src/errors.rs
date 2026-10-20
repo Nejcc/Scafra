@@ -249,6 +249,39 @@ impl GraphError {
     ) -> Self {
         Self::ProviderFailure(ProviderFailure::new(provider, phase, source, error))
     }
+
+    /// Returns the original provider failure when initialization required
+    /// cleanup after earlier providers had succeeded.
+    pub fn original_provider_failure(&self) -> Option<&ProviderFailure> {
+        match self {
+            Self::ProviderFailure(failure) => failure.original_provider_failure(),
+            _ => None,
+        }
+    }
+
+    /// Returns provider cleanup failures collected during startup rollback or
+    /// application shutdown.
+    pub fn cleanup_failures(&self) -> &[ProviderFailure] {
+        match self {
+            Self::ProviderFailure(failure) => failure.cleanup_failures(),
+            _ => &[],
+        }
+    }
+
+    /// Preserves a provider initialization error together with every failed
+    /// rollback operation while retaining the existing graph error variant.
+    pub fn startup_failure(
+        original: ProviderFailure,
+        cleanup_failures: Vec<ProviderFailure>,
+    ) -> Self {
+        Self::ProviderFailure(ProviderFailure::startup_failure(original, cleanup_failures))
+    }
+
+    /// Reports all resource shutdown failures while retaining the existing
+    /// graph error variant.
+    pub fn shutdown_failure(failures: Vec<ProviderFailure>) -> Self {
+        Self::ProviderFailure(ProviderFailure::shutdown_failure(failures))
+    }
 }
 
 impl fmt::Display for GraphError {
@@ -328,6 +361,9 @@ pub struct ProviderFailure {
     phase: GraphPhase,
     source: &'static str,
     error: Box<dyn Error + Send + Sync + 'static>,
+    operation: &'static str,
+    original: Option<Box<ProviderFailure>>,
+    cleanup_failures: Vec<ProviderFailure>,
 }
 
 impl ProviderFailure {
@@ -342,6 +378,50 @@ impl ProviderFailure {
             phase,
             source,
             error: Box::new(error),
+            operation: "construction",
+            original: None,
+            cleanup_failures: Vec::new(),
+        }
+    }
+
+    /// Records one resource shutdown failure.
+    pub fn cleanup_failure(
+        provider: &'static str,
+        source: &'static str,
+        error: impl Error + Send + Sync + 'static,
+    ) -> Self {
+        Self {
+            provider,
+            phase: GraphPhase::Construction,
+            source,
+            error: Box::new(error),
+            operation: "cleanup",
+            original: None,
+            cleanup_failures: Vec::new(),
+        }
+    }
+
+    fn startup_failure(original: ProviderFailure, cleanup_failures: Vec<ProviderFailure>) -> Self {
+        Self {
+            provider: original.provider,
+            phase: original.phase,
+            source: original.source,
+            error: Box::new(ProviderFailureSummary("startup rollback")),
+            operation: "startup rollback",
+            original: Some(Box::new(original)),
+            cleanup_failures,
+        }
+    }
+
+    fn shutdown_failure(cleanup_failures: Vec<ProviderFailure>) -> Self {
+        Self {
+            provider: "application resources",
+            phase: GraphPhase::Construction,
+            source: "generated resource set",
+            error: Box::new(ProviderFailureSummary("resource shutdown")),
+            operation: "resource shutdown",
+            original: None,
+            cleanup_failures,
         }
     }
 
@@ -356,6 +436,23 @@ impl ProviderFailure {
     pub fn source_location(&self) -> &'static str {
         self.source
     }
+
+    /// Returns whether this error occurred during provider construction,
+    /// startup rollback, or application shutdown.
+    pub fn operation(&self) -> &'static str {
+        self.operation
+    }
+
+    /// Returns the provider failure that caused startup rollback.
+    pub fn original_provider_failure(&self) -> Option<&ProviderFailure> {
+        self.original.as_deref()
+    }
+
+    /// Returns cleanup failures collected after the original initialization
+    /// failure, or during application shutdown.
+    pub fn cleanup_failures(&self) -> &[ProviderFailure] {
+        &self.cleanup_failures
+    }
 }
 
 impl fmt::Debug for ProviderFailure {
@@ -365,6 +462,8 @@ impl fmt::Debug for ProviderFailure {
             .field("provider", &self.provider)
             .field("phase", &self.phase)
             .field("source", &self.source)
+            .field("operation", &self.operation)
+            .field("cleanup_failures", &self.cleanup_failures)
             .field("error", &"<redacted; inspect Error::source explicitly>")
             .finish()
     }
@@ -372,16 +471,54 @@ impl fmt::Debug for ProviderFailure {
 
 impl fmt::Display for ProviderFailure {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(
-            formatter,
-            "graph provider `{}` failed during {:?} at {}",
-            self.provider, self.phase, self.source
-        )
+        match self.operation {
+            "startup rollback" => write!(
+                formatter,
+                "application resource provider `{}` failed during startup at {} ({} cleanup failure(s))",
+                self.provider,
+                self.source,
+                self.cleanup_failures.len()
+            ),
+            "resource shutdown" => write!(
+                formatter,
+                "application resource shutdown had {} failure(s)",
+                self.cleanup_failures.len()
+            ),
+            "cleanup" => write!(
+                formatter,
+                "graph provider `{}` cleanup failed at {}",
+                self.provider, self.source
+            ),
+            _ => write!(
+                formatter,
+                "graph provider `{}` failed during {:?} at {}",
+                self.provider, self.phase, self.source
+            ),
+        }
     }
 }
 
 impl Error for ProviderFailure {
     fn source(&self) -> Option<&(dyn Error + 'static)> {
-        Some(self.error.as_ref())
+        if let Some(original) = self.original.as_deref() {
+            Some(original as &(dyn Error + 'static))
+        } else {
+            Some(self.error.as_ref() as &(dyn Error + 'static))
+        }
     }
 }
+
+#[derive(Debug)]
+struct ProviderFailureSummary(&'static str);
+
+impl fmt::Display for ProviderFailureSummary {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(
+            formatter,
+            "{} details are available through ProviderFailure",
+            self.0
+        )
+    }
+}
+
+impl Error for ProviderFailureSummary {}

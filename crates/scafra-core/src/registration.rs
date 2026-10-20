@@ -1,4 +1,7 @@
-use scafra_foundation::{Phase, PhaseMetadata};
+use scafra_foundation::{Phase, PhaseMetadata, ShutdownPolicy, ShutdownReason};
+use std::future::Future;
+
+use crate::GraphError;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ComponentKind {
@@ -68,6 +71,58 @@ inventory::collect!(PostProcessorRegistration);
 
 /// Marker trait for values supplied by a typed `#[bean]` provider.
 pub trait Bean: Send + Sync + 'static {}
+
+/// A resource created by an asynchronous graph provider.
+///
+/// Applications implement this trait on an application-owned type, usually a
+/// newtype around a third-party client or pool. `shutdown` must cooperatively
+/// stop work owned by the resource and return after that work has drained.
+/// The supplied policy lets the implementation apply its grace period. The
+/// framework does not forcibly cancel arbitrary provider or cleanup futures.
+pub trait AsyncResource: Send + Sync + 'static {
+    /// The typed error returned when resource teardown fails.
+    type ShutdownError: std::error::Error + Send + Sync + 'static;
+
+    /// Prevents the resource from accepting new owned work when shutdown
+    /// begins. Implementations should make this operation prompt and
+    /// idempotent; the default is suitable for resources without task loops.
+    fn request_shutdown(&self, _reason: ShutdownReason) {}
+
+    /// Requests cooperative shutdown and waits for owned work to finish.
+    fn shutdown<'a>(
+        &'a self,
+        reason: ShutdownReason,
+        policy: ShutdownPolicy,
+    ) -> impl Future<Output = Result<(), Self::ShutdownError>> + Send + 'a;
+}
+
+/// The generated, statically typed set of resources retained for an
+/// application's lifetime.
+///
+/// Implementations shut resources down in reverse dependency order and keep
+/// attempting cleanup after an individual failure.
+pub trait AsyncResourceSet: Send + Sync + 'static {
+    /// Starts cooperative shutdown for every owned resource. The generated
+    /// implementation calls resources in reverse dependency order.
+    fn request_shutdown(&self, _reason: ShutdownReason) {}
+
+    /// Shuts down all resources owned by this set.
+    fn shutdown<'a>(
+        &'a self,
+        reason: ShutdownReason,
+        policy: ShutdownPolicy,
+    ) -> impl Future<Output = Result<(), GraphError>> + Send + 'a;
+}
+
+impl AsyncResourceSet for () {
+    async fn shutdown(
+        &self,
+        _reason: ShutdownReason,
+        _policy: ShutdownPolicy,
+    ) -> Result<(), GraphError> {
+        Ok(())
+    }
+}
 
 #[doc(hidden)]
 pub mod __private {

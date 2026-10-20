@@ -92,4 +92,46 @@ fn invalid_generated_graphs_fail_with_source_aware_diagnostics() {
             );
         }
     }
+
+    let manifest = fixture_root.join("async_owned_dependency/Cargo.toml");
+    let output = Command::new("cargo")
+        .args(["check", "--offline", "--manifest-path"])
+        .arg(&manifest)
+        .env("CARGO_TARGET_DIR", &target.0)
+        .output()
+        .expect("could not check async ownership fixture");
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        !output.status.success(),
+        "async owned dependency fixture unexpectedly compiled"
+    );
+    assert!(
+        stderr.contains("must be injected as `Arc<Database>`"),
+        "async ownership diagnostic was not useful:\n{stderr}"
+    );
+    assert!(
+        stderr.contains("src/main/providers.rs"),
+        "async ownership diagnostic lost source context:\n{stderr}"
+    );
+    assert!(
+        !stderr.contains("mismatched types"),
+        "async ownership fixture reached a generated type mismatch:\n{stderr}"
+    );
+
+    let manifest = fixture_root.join("async_missing_shutdown/Cargo.toml");
+    let output = Command::new("cargo")
+        .args(["check", "--offline", "--manifest-path"])
+        .arg(&manifest)
+        .env("CARGO_TARGET_DIR", &target.0)
+        .output()
+        .expect("could not check async shutdown fixture");
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        !output.status.success(),
+        "async provider without a shutdown contract unexpectedly compiled"
+    );
+    assert!(
+        stderr.contains("AsyncResource") && stderr.contains("UnmanagedPool"),
+        "async shutdown trait-bound diagnostic was not useful:\n{stderr}"
+    );
 }

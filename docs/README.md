@@ -16,6 +16,8 @@ Axum, Tokio, Tower, Serde, and `tracing`.
   controller-level and route-level authorization policies.
 - [Dependency graph guide](guides/dependency-graph.md) — understand the typed
   graph used by standard startup and the custom build-script route.
+- [Resource lifecycle guide](guides/resource-lifecycle.md) — initialize,
+  cancel, roll back, and shut down asynchronous application resources.
 - [Publishing](publishing.md) — configure and trigger a crates.io release.
 - [Contributing](contributing.md) — build the workspace and make a focused
   contribution.

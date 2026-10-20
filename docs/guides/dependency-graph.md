@@ -11,15 +11,26 @@ script with `scafra_build::discover_graph`.
 
 Annotate services and providers with `#[service]` and `#[bean]`, then list
 dependency types as constructor fields or provider arguments. The graph checks
-missing providers and cycles during compilation and constructs fallible bean
-providers during startup. Shared dependencies use `Arc<T>` on every consumer;
-the graph constructs one value and clones its handle for each consumer.
+missing providers and cycles during compilation. Synchronous fallible providers
+and asynchronous providers run during startup. Shared dependencies use
+`Arc<T>` on every consumer; the graph constructs one value and clones its
+handle for each consumer.
+
+Async providers use an `async fn` and return an owned concrete resource,
+normally as `Result<T, E>`. The output type implements `AsyncResource`, and
+every consumer declares `Arc<T>` so the graph can retain the resource for
+shutdown. Initialization uses `compose_async()` and is sequential in graph
+order. See the [resource lifecycle guide](resource-lifecycle.md) for rollback,
+shutdown, and an integration example.
 
 Services and controllers are constructed with their generated `new(...)`
 constructors, so graph injection does not require `Default`. For compatibility
 with standalone `build_router()`, use `#[routes(default)]` on controllers that
 implement `Default`. Graph-composed controllers use `#[routes]` and are
-registered with their constructed instances.
+registered with their constructed instances. When composing asynchronously,
+use `Graph::build_router_and_resources` and pass the returned resource set to
+`run_with_resources`; the legacy `build_router` method drops that set and is
+intended for graphs without async providers.
 
 ## Important boundaries
 

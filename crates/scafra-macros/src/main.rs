@@ -51,10 +51,10 @@ pub(crate) fn expand_main_item(input: ItemFn) -> Result<proc_macro2::TokenStream
         PathBuf::from(env::var_os("CARGO_MANIFEST_DIR").expect("manifest was checked")),
     )
     .map_err(|error| Error::new(proc_macro2::Span::call_site(), error.to_string()))?;
-    let graph = graph_source.parse::<TokenStream>().map_err(|_| {
+    let graph = graph_source.parse::<TokenStream>().map_err(|error| {
         Error::new(
             proc_macro2::Span::call_site(),
-            "could not render Scafra dependency graph",
+            format!("could not render Scafra dependency graph: {error}"),
         )
     })?;
     Ok(quote! {
@@ -67,30 +67,57 @@ pub(crate) fn expand_main_item(input: ItemFn) -> Result<proc_macro2::TokenStream
                 && ::std::env::var_os("SCAFRA_DEV_CHILD").is_none()
                 && ::std::env::var("SCAFRA_DEV_RELOAD").as_deref() != Ok("false")
             {
-                let exit_code = ::scafra::__private::run_dev_supervisor(
-                    env!("CARGO_MANIFEST_DIR"),
-                    ::std::env::current_exe().expect("Scafra could not locate the application binary"),
-                );
+                let exit_code = match ::std::env::current_exe() {
+                    Ok(executable) => ::scafra::__private::run_dev_supervisor(
+                        env!("CARGO_MANIFEST_DIR"),
+                        executable,
+                    ),
+                    Err(error) => {
+                        eprintln!("Scafra could not locate the application binary: {error}");
+                        1
+                    }
+                };
                 ::std::process::exit(exit_code);
             }
-            ::scafra::__private::tokio::runtime::Builder::new_multi_thread()
+            let runtime = match ::scafra::__private::tokio::runtime::Builder::new_multi_thread()
                 .enable_all()
                 .build()
-                .expect("Scafra could not create the Tokio runtime")
-                .block_on(async {
+            {
+                Ok(runtime) => runtime,
+                Err(error) => {
+                    eprintln!("Scafra could not create the Tokio runtime: {error}");
+                    ::std::process::exit(1);
+                }
+            };
+            runtime.block_on(async {
                     #body
-                    if let Err(error) = ::scafra::run_with_router(|config| {
-                        let graph = __scafra_graph::compose()?;
-                        graph.build_router(
+                    if let Err(error) = ::scafra::run_with_resources(|config| async move {
+                        let graph = __scafra_graph::compose_async().await?;
+                        let (router, resources) = graph.build_router_and_resources(
                             &config.actuator,
                             &config.security,
                             config.server.request_timeout_seconds.map(::std::time::Duration::from_secs),
-                        ).map_err(::scafra::StartupError::from)
+                        );
+                        match router {
+                            Ok(router) => Ok((router, resources)),
+                            Err(error) => {
+                                if let Err(cleanup) = ::scafra::core::AsyncResourceSet::shutdown(
+                                    &resources,
+                                    ::scafra::ShutdownReason::StartupFailure,
+                                    ::scafra::ShutdownPolicy::default(),
+                                ).await {
+                                    ::scafra::__private::log_cleanup_failure(
+                                        &::scafra::StartupError::from(cleanup),
+                                    );
+                                }
+                                Err(::scafra::StartupError::from(error))
+                            }
+                        }
                     }).await {
                         ::scafra::__private::log_startup_failure(&error);
                         ::std::process::exit(1);
                     }
-                });
+            });
         }
     })
 }
