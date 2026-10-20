@@ -69,7 +69,14 @@ impl PostProcessorRegistration {
 
 inventory::collect!(PostProcessorRegistration);
 
-/// Marker trait for values supplied by a typed `#[bean]` provider.
+/// Optional marker trait for application-defined bean values.
+///
+/// Typed graph composition does not require this marker. The `#[bean]` macro
+/// intentionally does not implement it: a macro cannot reliably distinguish a
+/// local type from a foreign type imported under a local name, and Rust's
+/// orphan rules forbid implementing Scafra's trait for a foreign type.
+/// Applications that use `Bean` as their own bound can implement it for local
+/// types.
 pub trait Bean: Send + Sync + 'static {}
 
 /// A resource created by an asynchronous graph provider.

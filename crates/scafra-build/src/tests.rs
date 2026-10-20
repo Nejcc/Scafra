@@ -634,7 +634,12 @@ fn graph_parser_reports_source_aware_declaration_errors() {
         ),
         (
             r#"#[bean] pub fn value() -> Unknown { Unknown }"#,
-            "must return a public concrete type declared in application source",
+            "must return a public application-owned resource struct",
+            true,
+        ),
+        (
+            r#"#[bean] pub fn pool() -> sqlx::PgPool { loop {} }"#,
+            "qualified bean provider outputs are not supported",
             true,
         ),
     ];
