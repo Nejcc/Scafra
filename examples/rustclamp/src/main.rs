@@ -1,11 +1,10 @@
-//! Compose a Scafra controller and a RustClamp route on one listener.
-
-use std::{error::Error, time::Duration};
+//! Experimental: compose a Scafra controller and a RustClamp route, served by
+//! Scafra's standard runner.
 
 use axum::{Router, routing::get};
 use rustclamp_core::{ContributionTarget, ModuleId};
 use rustclamp_http::{HttpRoute, HttpRoutes, Public, RouteBuildError};
-use scafra::{Application, ApplicationContext, ConfigLoader, ScafraConfig, Scheduler};
+use scafra::{ScafraConfig, StartupError, web::WebError};
 
 #[scafra::service]
 struct GreetingService;
@@ -44,73 +43,27 @@ fn compose(scafra_router: Router) -> Result<Router, RouteBuildError> {
     ])
 }
 
-#[tokio::main]
-async fn main() -> Result<(), Box<dyn Error>> {
-    let loader = match std::env::var("SCAFRA_PROFILE") {
-        Ok(profile) => ConfigLoader::new().profile(profile),
-        Err(_) => ConfigLoader::new(),
-    };
-    let config = loader.load_validated::<ScafraConfig>()?;
-    scafra::foundation::init_runtime_logging(&config.logging);
-
-    // Validate composition and bind before starting lifecycle work.
+/// Builds the composed router once Scafra has loaded validated configuration.
+fn build(config: &ScafraConfig) -> Result<Router, StartupError> {
     let scafra_router =
         scafra::web::build_router_with_actuator_and_security(&config.actuator, &config.security)?;
-    let router = compose(scafra_router)?;
-    let listener =
-        tokio::net::TcpListener::bind((config.server.host.as_str(), config.server.port)).await?;
-    let address = listener.local_addr()?;
+    compose(scafra_router).map_err(route_error)
+}
 
-    // Watch Ctrl-C concurrently; registration failures are propagated below.
-    let mut signal = tokio::spawn(tokio::signal::ctrl_c());
-    let mut application = Application::new(ApplicationContext::discover());
-    if let Err(error) = application.start() {
-        signal.abort();
-        return Err(error.into());
-    }
-    let scheduler = Scheduler::start(&config.scheduler);
-    println!("Scafra + RustClamp listening at http://{address}");
+// ponytail: StartupError has no variant for external errors; reported as a
+// web startup failure until Scafra offers one.
+fn route_error(error: RouteBuildError) -> StartupError {
+    WebError::Server(std::io::Error::new(std::io::ErrorKind::InvalidInput, error)).into()
+}
 
-    // Selecting explicitly propagates signal-registration errors instead of
-    // panicking or waiting forever. Once signalled, ask the server to drain.
-    let (stop, stopped) = tokio::sync::oneshot::channel::<()>();
-    let serving = rustclamp_http::serve(
-        listener,
-        router,
-        async {
-            let _ = stopped.await;
-        },
-        Duration::from_secs(10),
-    );
-    tokio::pin!(serving);
-    let (result, reason): (Result<(), Box<dyn Error>>, _) = tokio::select! {
-        result = &mut serving => (result.map_err(Into::into), scafra::ShutdownReason::RuntimeFailure),
-        result = &mut signal => {
-            let reason = if matches!(result, Ok(Ok(()))) {
-                scafra::ShutdownReason::Signal
-            } else {
-                scafra::ShutdownReason::RuntimeFailure
-            };
-            let _ = stop.send(());
-            let drain = (&mut serving).await;
-            let outcome = match result {
-                Ok(Ok(())) => drain.map_err(Into::into),
-                Ok(Err(error)) => Err(error.into()),
-                Err(error) => Err(error.into()),
-            };
-            (outcome, reason)
-        }
-    };
-    signal.abort();
-    scheduler.stop();
-    let cleanup = application.shutdown_with(reason, scafra::ShutdownPolicy::default());
-    if cleanup.is_err() {
+#[tokio::main]
+async fn main() {
+    // Scafra owns configuration, lifecycle, scheduler, signals and shutdown.
+    if let Err(error) = scafra::run_with_router(build).await {
         // Lifecycle errors may contain application-provided sensitive text.
-        eprintln!("Scafra lifecycle cleanup failed");
+        eprintln!("Scafra startup failed ({})", error.kind());
+        std::process::exit(1);
     }
-    result?;
-    cleanup?;
-    Ok(())
 }
 
 #[cfg(test)]
@@ -124,7 +77,7 @@ mod tests {
 
     #[tokio::test]
     async fn serves_generated_scafra_controller_and_clamp_route() {
-        let router = compose(scafra::build_router().unwrap()).unwrap();
+        let router = build(&ScafraConfig::default()).unwrap();
         for (path, expected) in [
             ("/scafra/api/hello/Alice", "Hello, Alice!"),
             ("/health", "ok"),
@@ -198,5 +151,29 @@ mod tests {
             ),
         ]);
         assert!(result.is_err());
+    }
+
+    #[test]
+    fn composition_failure_is_a_startup_error() {
+        let conflict = HttpRoutes::<Public>::new()
+            .build(&[
+                (
+                    ModuleId::new("app.scafra"),
+                    HttpRoute::<Public>::mount("/scafra", Router::new()),
+                ),
+                (
+                    ModuleId::new("app.conflict"),
+                    HttpRoute::<Public>::new("/scafra/other", get(|| async { "conflict" })),
+                ),
+            ])
+            .unwrap_err();
+        assert_eq!(route_error(conflict).kind(), "web");
+    }
+
+    #[test]
+    fn invalid_configuration_fails_before_serving() {
+        let mut config = ScafraConfig::default();
+        config.actuator.health.checks = vec!["missing-check".to_owned()];
+        assert_eq!(build(&config).unwrap_err().kind(), "web");
     }
 }

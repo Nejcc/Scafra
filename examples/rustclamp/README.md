@@ -1,9 +1,13 @@
-# Scafra + RustClamp
+# Scafra + RustClamp (experimental)
+
+> **Experimental.** RustClamp's crates are not yet published and require a
+> newer Rust toolchain than Scafra. This example may change or move once they
+> are available from crates.io.
 
 An opt-in example that mounts a Scafra-generated Axum router as one RustClamp
 HTTP contribution and adds a separate public `/health` route. Scafra still
 constructs its controllers and services; RustClamp validates and composes the
-HTTP contributions. One Tokio runtime serves the result.
+HTTP contributions. Scafra's standard runner serves the result.
 
 This package has its own workspace. It does not change Scafra's workspace
 dependencies, default runner or Rust 1.82 minimum. The example requires Rust
@@ -65,24 +69,19 @@ authentication applies inside `/scafra`; supply the configured credentials when
 enabled. `/health` is intentionally public and sits outside that layer.
 
 The tests exercise a generated controller and its service, the separate health
-route, bearer authentication after mounting, and conflicting contribution
-rejection. Mounting under `/scafra` changes external URLs; choose a root mount
+route, bearer authentication after mounting, conflicting contribution
+rejection, and startup failures for invalid composition and configuration. Mounting under `/scafra` changes external URLs; choose a root mount
 deliberately if your application needs its original paths.
 
 ## Startup and shutdown boundaries
 
-The example validates composition and binds the listener before starting
-Scafra's application lifecycle. It starts Scafra's configured scheduler and stops
-it before lifecycle cleanup. Ctrl-C initiates RustClamp's bounded ten-second
-HTTP drain. Signal-registration and serving errors still pass through cleanup;
-cleanup failure does not hide an earlier serving error.
-
-This custom entry point does not reproduce the complete default Scafra runner:
-it has no SIGTERM handling, startup banner or development supervisor, does not
-start optional extensions such as BootUI, and uses its own fixed HTTP drain
-timeout instead of Scafra's HTTP shutdown policy. Scafra's actuator and security
-configuration are explicitly passed to its router builder. Applications that
-need the omitted runner behavior must wire it in explicitly.
+The example passes its composed router to `scafra::run_with_router`, so Scafra's
+standard runner owns configuration loading, `SCAFRA_PROFILE`, logging, the
+application lifecycle, the scheduler, signal handling and HTTP shutdown policy.
+Composition runs after configuration loads and before the lifecycle starts; a
+composition failure is reported as a `web` startup error and nothing is
+started. Scafra serves the supplied router as-is, so its security layer applies
+only inside `/scafra`.
 
 The shared boundary is an Axum 0.8 router. This example does not bridge Scafra's
 Default-based service construction to RustClamp capability resolution or move

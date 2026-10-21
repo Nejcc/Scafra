@@ -20,7 +20,8 @@ Axum, Tokio, Tower, Serde, and `tracing`.
   cancel, roll back, and shut down asynchronous application resources.
 - [Publishing](publishing.md) — configure and trigger a crates.io release.
 - [RustClamp integration example](../examples/rustclamp/README.md) — compose a
-  Scafra router with RustClamp HTTP contributions in an isolated opt-in package.
+  Scafra router with RustClamp HTTP contributions in an isolated, experimental
+  opt-in package.
 - [Contributing](contributing.md) — build the workspace and make a focused
   contribution.
 
