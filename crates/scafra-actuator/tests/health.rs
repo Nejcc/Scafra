@@ -99,6 +99,40 @@ async fn readiness_and_aggregate_health_run_only_selected_checks() {
 }
 
 #[tokio::test]
+async fn multiple_configured_checks_must_all_pass_for_readiness() {
+    let mut healthy_registry = HealthRegistry::new();
+    healthy_registry
+        .register("database", || async { true })
+        .expect("database check should register");
+    healthy_registry
+        .register("redis", || async { true })
+        .expect("redis check should register");
+    let healthy = router_with_health_registry(
+        &config(vec!["database".to_owned(), "redis".to_owned()]),
+        healthy_registry,
+    )
+    .expect("both configured checks should be registered");
+    assert_eq!(get(&healthy, "/ready").await.0, StatusCode::OK);
+
+    let mut failing_registry = HealthRegistry::new();
+    failing_registry
+        .register("database", || async { true })
+        .expect("database check should register");
+    failing_registry
+        .register("redis", || async { false })
+        .expect("redis check should register");
+    let failing = router_with_health_registry(
+        &config(vec!["database".to_owned(), "redis".to_owned()]),
+        failing_registry,
+    )
+    .expect("both configured checks should be registered");
+    assert_eq!(
+        get(&failing, "/ready").await.0,
+        StatusCode::SERVICE_UNAVAILABLE
+    );
+}
+
+#[tokio::test]
 async fn liveness_does_not_execute_dependency_checks() {
     let calls = Arc::new(AtomicUsize::new(0));
     let calls_for_check = Arc::clone(&calls);

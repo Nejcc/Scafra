@@ -146,8 +146,33 @@ The standard `#[scafra::main]` builder remains compatible with
 cannot inspect a particular graph. Applications that need graph-owned service
 state should use a custom `run_with_router` builder and the generated graph
 method. Duplicate or empty registry names are rejected. An unknown configured
-check is rejected when the graph-scoped router is built; an unknown selection
-on the legacy router reports `DOWN`.
+check is rejected when a graph-scoped router is built. Standard Scafra web
+builders and the generated graph's `build_router_and_resources` validate
+legacy check selections before serving. Use `scafra::actuator::try_router`
+when constructing a legacy router directly. The infallible compatibility
+`router` remains fail-closed and reports `DOWN` for unknown selections.
+
+The empty `actuator.health.checks` list selects every registered check; `*`
+does the same. If there are no registered checks, the selection is healthy.
+Repeated configured names are treated as one selection, while duplicate names
+inside a `HealthRegistry` are rejected. An unknown name remains invalid even
+when `*` is also present. Startup errors point to `actuator.health.checks` and
+name the unknown health-check identifiers so they can be corrected. They do
+not include actuator credentials, and public probe bodies remain generic.
+`HealthRegistryError::UnknownConfiguredChecks` now carries both `count` and
+`names`; downstream matches that previously named only `count` can add `..` or
+bind `names`. Router and health-registry function signatures are otherwise
+unchanged.
+Duplicate process-wide `register_health_check!` names are rejected during
+fallible router construction; the infallible compatibility router reports
+`DOWN` for that invalid registry.
+
+Validation runs against the effective configuration after base files, profile
+files, and environment overrides are merged. In the generated async startup
+path this check runs after graph resources initialize and before HTTP binding;
+the existing failed-startup cleanup closes those resources. Correct check
+names are configuration validation, while a registered check that returns
+false remains a runtime readiness failure and does not fail startup.
 
 See the implementation and tests in `crates/scafra-build` for the current API
 surface and supported graph shapes.

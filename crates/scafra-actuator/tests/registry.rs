@@ -4,7 +4,8 @@ use axum::{
     Router,
 };
 use scafra_actuator::{
-    router_with_health_registry, ActuatorConfig, HealthConfig, HealthRegistry, HealthRegistryError,
+    router_with_health_registry, ActuatorConfig, ActuatorSecurity, HealthConfig, HealthRegistry,
+    HealthRegistryError,
 };
 use std::sync::{
     atomic::{AtomicUsize, Ordering},
@@ -13,6 +14,7 @@ use std::sync::{
 use tower::ServiceExt;
 
 const PRIVATE_CHECK_NAME: &str = "private-config-value";
+const PRIVATE_BEARER_TOKEN: &str = "do-not-show-this-bearer-token";
 
 fn config(checks: Vec<String>) -> ActuatorConfig {
     ActuatorConfig {
@@ -176,18 +178,44 @@ async fn registry_supports_direct_async_health_evaluation() {
     assert!(registry.is_healthy(&HealthConfig::default()).await);
 }
 
+#[tokio::test]
+async fn repeated_configured_names_run_the_registered_check_once_per_evaluation() {
+    let calls = Arc::new(AtomicUsize::new(0));
+    let check_calls = Arc::clone(&calls);
+    let mut registry = HealthRegistry::new();
+    registry
+        .register("database", move || {
+            let calls = Arc::clone(&check_calls);
+            async move {
+                calls.fetch_add(1, Ordering::Relaxed);
+                true
+            }
+        })
+        .expect("the database check should register");
+    let config = config(vec!["database".to_owned(), "database".to_owned()]);
+    let router = router_with_health_registry(&config, registry)
+        .expect("repeated selection names should be accepted");
+
+    assert_eq!(get(&router, "/ready").await.0, StatusCode::OK);
+    assert_eq!(calls.load(Ordering::Relaxed), 1);
+}
+
 #[test]
-fn unknown_configured_names_are_rejected_without_echoing_configuration() {
-    let error = router_with_health_registry(
-        &config(vec![PRIVATE_CHECK_NAME.to_owned()]),
-        HealthRegistry::new(),
-    )
-    .expect_err("unknown configured check should fail router construction");
+fn unknown_configured_names_are_identified_without_exposing_credentials() {
+    let mut actuator = config(vec![PRIVATE_CHECK_NAME.to_owned()]);
+    actuator.security = ActuatorSecurity {
+        enabled: true,
+        bearer_token: Some(PRIVATE_BEARER_TOKEN.to_owned()),
+    };
+    let error = router_with_health_registry(&actuator, HealthRegistry::new())
+        .expect_err("unknown configured check should fail router construction");
     assert!(matches!(
-        error,
-        HealthRegistryError::UnknownConfiguredChecks { count: 1 }
+        &error,
+        HealthRegistryError::UnknownConfiguredChecks { count: 1, names }
+            if names == &[PRIVATE_CHECK_NAME.to_owned()]
     ));
-    assert!(!error.to_string().contains(PRIVATE_CHECK_NAME));
+    assert!(error.to_string().contains(PRIVATE_CHECK_NAME));
+    assert!(!error.to_string().contains(PRIVATE_BEARER_TOKEN));
 
     let mut registry = HealthRegistry::new();
     registry.register("known", || async { true }).unwrap();
@@ -199,10 +227,11 @@ fn unknown_configured_names_are_rejected_without_echoing_configuration() {
         .validate(&wildcard_with_unknown)
         .expect_err("wildcards should not hide misspelled configured names");
     assert!(matches!(
-        error,
-        HealthRegistryError::UnknownConfiguredChecks { count: 1 }
+        &error,
+        HealthRegistryError::UnknownConfiguredChecks { count: 1, names }
+            if names == &[PRIVATE_CHECK_NAME.to_owned()]
     ));
-    assert!(!error.to_string().contains(PRIVATE_CHECK_NAME));
+    assert!(error.to_string().contains(PRIVATE_CHECK_NAME));
 }
 
 #[test]

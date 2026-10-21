@@ -98,24 +98,34 @@ impl HealthRegistry {
         Ok(())
     }
 
-    /// Validates configured check names against this registry.
+    /// Validates configured check names and registry uniqueness.
     ///
-    /// `*` selects all checks. Unknown names are counted in the error without
-    /// including configured values in its diagnostic.
+    /// `*` selects all checks. Duplicate registered names are rejected.
+    /// Unknown names are included in the typed startup diagnostic so the
+    /// selection can be corrected; credentials from actuator security settings
+    /// are not part of this error.
     pub fn validate(&self, config: &HealthConfig) -> Result<(), HealthRegistryError> {
-        let mut unknown_count = 0;
+        let mut registered = HashSet::new();
+        for check in &self.checks {
+            if !registered.insert(check.name.as_str()) {
+                return Err(HealthRegistryError::DuplicateCheckName(check.name.clone()));
+            }
+        }
+
+        let mut unknown_names = Vec::new();
         let mut visited = HashSet::new();
         for name in config.checks.iter().filter(|name| name.as_str() != "*") {
             if visited.insert(name.as_str()) && !self.checks.iter().any(|check| check.name == *name)
             {
-                unknown_count += 1;
+                unknown_names.push(name.clone());
             }
         }
-        if unknown_count == 0 {
+        if unknown_names.is_empty() {
             Ok(())
         } else {
             Err(HealthRegistryError::UnknownConfiguredChecks {
-                count: unknown_count,
+                count: unknown_names.len(),
+                names: unknown_names,
             })
         }
     }
@@ -166,8 +176,9 @@ pub enum HealthRegistryError {
     /// A registry cannot contain two checks with the same name.
     DuplicateCheckName(String),
     /// A configured selection contains names absent from this registry.
-    /// The number is reported without exposing configuration values.
-    UnknownConfiguredChecks { count: usize },
+    /// Unknown names identify the invalid `actuator.health.checks` entries.
+    /// Actuator HTTP responses never include this error or configured names.
+    UnknownConfiguredChecks { count: usize, names: Vec<String> },
 }
 
 impl fmt::Display for HealthRegistryError {
@@ -180,9 +191,9 @@ impl fmt::Display for HealthRegistryError {
                     "health check name is registered more than once: {name}"
                 )
             }
-            Self::UnknownConfiguredChecks { count } => write!(
+            Self::UnknownConfiguredChecks { count, names } => write!(
                 formatter,
-                "actuator health configuration references {count} unknown check name(s)"
+                "actuator.health.checks contains {count} unknown check name(s) {names:?}; verify each configured entry matches a registered health check"
             ),
         }
     }

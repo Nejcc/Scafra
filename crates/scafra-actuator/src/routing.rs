@@ -14,11 +14,11 @@ pub(crate) struct ActuatorState {
 
 /// Adds built-in operational routes using legacy process-wide registrations.
 ///
-/// This signature is retained for compatibility. New applications should
-/// construct one [`HealthRegistry`] per graph and use
-/// [`router_with_health_registry`]. Unknown configured names fail closed at
-/// request time because this legacy constructor cannot return a construction
-/// error.
+/// This infallible signature is retained for compatibility. Unknown configured
+/// names produce a router whose health and readiness endpoints return `DOWN`.
+/// Application startup should use [`try_router`] so configuration errors are
+/// reported before serving. New applications should prefer one
+/// [`HealthRegistry`] per graph and [`router_with_health_registry`].
 pub fn router(config: &ActuatorConfig) -> Router {
     let registry = HealthRegistry::from_legacy_registrations();
     let valid = registry.validate(&config.health).is_ok();
@@ -26,6 +26,19 @@ pub fn router(config: &ActuatorConfig) -> Router {
         tracing::error!("actuator health configuration references unknown checks");
     }
     build_router(config, registry, valid)
+}
+
+/// Adds built-in operational routes and rejects unknown configured check
+/// names before returning the router.
+///
+/// Use this constructor at application startup when checks were registered
+/// with [`crate::register_health_check!`]. The standard Scafra web builder and
+/// generated application graph use this fallible path. [`router`] remains
+/// available for source compatibility and fails closed at request time.
+pub fn try_router(config: &ActuatorConfig) -> Result<Router, HealthRegistryError> {
+    let registry = HealthRegistry::from_legacy_registrations();
+    registry.validate(&config.health)?;
+    Ok(build_router(config, registry, true))
 }
 
 /// Adds built-in operational routes backed by one application-owned registry.
