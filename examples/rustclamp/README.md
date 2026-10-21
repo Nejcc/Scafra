@@ -1,8 +1,8 @@
 # Scafra + RustClamp (experimental)
 
-> **Experimental.** RustClamp's crates are not yet published and require a
-> newer Rust toolchain than Scafra. This example may change or move once they
-> are available from crates.io.
+> **Experimental.** RustClamp requires Rust 1.96.1, a newer toolchain than
+> Scafra's minimum, so this example lives outside Scafra's workspace and may
+> change as RustClamp evolves.
 
 An opt-in example that mounts a Scafra-generated Axum router as one RustClamp
 HTTP contribution and adds a separate public `/health` route. Scafra still
@@ -12,36 +12,6 @@ HTTP contributions. Scafra's standard runner serves the result.
 This package has its own workspace. It does not change Scafra's workspace
 dependencies, default runner or Rust 1.82 minimum. The example requires Rust
 1.96.1 or later because RustClamp currently requires that version.
-
-## Set up the prototype components
-
-RustClamp's component crates are unpublished, and its HTTP manifest depends on
-Core through `../core`. Use sibling component checkouts rather than a standalone
-Git dependency on HTTP. Starting in the directory containing your Scafra checkout:
-
-```sh
-mkdir -p rustclamp
-git clone https://github.com/rustclamp/core rustclamp/core
-git -C rustclamp/core checkout 5b5fe2bb7f23468422234ea58d1c470fde3c1b69
-git clone https://github.com/rustclamp/http rustclamp/http
-git -C rustclamp/http checkout 071708827f973ac1031a9901bd53d6d1437e5dbe
-```
-
-The resulting layout must be:
-
-```text
-working-directory/
-  scafra/
-    crates/
-    examples/rustclamp/
-  rustclamp/
-    core/
-    http/
-```
-
-The manifest's local paths preserve a single Core crate identity for the
-application and HTTP adapter. When RustClamp publishes portable packages, these
-paths can be replaced with registry dependencies.
 
 ## Run and test
 

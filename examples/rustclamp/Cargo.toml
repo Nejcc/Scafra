@@ -5,15 +5,15 @@ edition = "2024"
 rust-version = "1.96.1"
 publish = false
 
-# Experimental: keep unpublished RustClamp dependencies and their higher MSRV
+# Experimental: keep RustClamp's higher MSRV
 # outside Scafra's workspace.
 [workspace]
 
 [dependencies]
 scafra = { path = "../../crates/scafra" }
 axum = "0.8.9"
-rustclamp-core = { path = "../../../rustclamp/core" }
-rustclamp-http = { path = "../../../rustclamp/http" }
+rustclamp-core = "1"
+rustclamp-http = "1"
 tokio = { version = "1", features = ["macros", "rt-multi-thread"] }
 
 [dev-dependencies]
