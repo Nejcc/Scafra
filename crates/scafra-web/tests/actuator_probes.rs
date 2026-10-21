@@ -1,6 +1,7 @@
 use axum::{
     body::{to_bytes, Body},
     http::{Request, StatusCode},
+    Router,
 };
 use scafra_web::{build_router_with_actuator, ActuatorConfig, ActuatorSecurity, HealthConfig};
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -9,6 +10,10 @@ use tower::util::ServiceExt;
 
 async fn unavailable_dependency() -> bool {
     false
+}
+
+async fn available_dependency() -> bool {
+    true
 }
 
 static SLOW_CHECK_DROPPED: AtomicBool = AtomicBool::new(false);
@@ -34,12 +39,17 @@ async fn panicking_dependency() -> bool {
 // Keep this failing registration isolated in its own integration-test binary.
 // The inventory is immutable, so parallel tests all observe the same check.
 scafra_web::register_health_check!("dependency", unavailable_dependency);
+scafra_web::register_health_check!("available-dependency", available_dependency);
 scafra_web::register_health_check!("slow-dependency", slow_dependency);
 scafra_web::register_health_check!("panicking-dependency", panicking_dependency);
 
 async fn get(config: &ActuatorConfig, path: &str) -> (StatusCode, String) {
-    let response = build_router_with_actuator(config)
-        .expect("the actuator router should build")
+    let router = build_router_with_actuator(config).expect("the actuator router should build");
+    get_from_router(router, path).await
+}
+
+async fn get_from_router(router: Router, path: &str) -> (StatusCode, String) {
+    let response = router
         .oneshot(
             Request::builder()
                 .uri(path)
@@ -105,11 +115,23 @@ async fn aggregate_health_keeps_evaluating_the_configured_checks() {
 async fn unknown_readiness_check_selection_fails_closed() {
     let config = ActuatorConfig {
         health: HealthConfig {
-            checks: vec!["another-check".to_owned()],
+            checks: vec![
+                "available-dependency".to_owned(),
+                "another-check".to_owned(),
+            ],
             ..HealthConfig::default()
         },
         ..ActuatorConfig::all()
     };
+
+    let error = build_router_with_actuator(&config)
+        .expect_err("the standard builder should reject unknown checks before serving");
+    assert!(error.to_string().contains("unknown check name"));
+
+    // The compatibility router cannot return a construction error, so it must
+    // retain the invalid-selection bit and fail closed even when one selected
+    // check is registered and passing.
+    let router = scafra_web::scafra_actuator::router(&config);
 
     for path in [
         "/ready",
@@ -118,9 +140,15 @@ async fn unknown_readiness_check_selection_fails_closed() {
         "/health",
         "/actuator/health",
     ] {
-        let (status, body) = get(&config, path).await;
+        let (status, body) = get_from_router(router.clone(), path).await;
         assert_eq!(status, StatusCode::SERVICE_UNAVAILABLE, "{path}");
         assert_eq!(body, r#"{"status":"DOWN"}"#, "{path}");
+    }
+
+    for path in ["/live", "/health/live", "/actuator/health/liveness"] {
+        let (status, body) = get_from_router(router.clone(), path).await;
+        assert_eq!(status, StatusCode::OK, "{path}");
+        assert_eq!(body, r#"{"status":"UP"}"#, "{path}");
     }
 }
 

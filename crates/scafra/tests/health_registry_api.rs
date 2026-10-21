@@ -63,6 +63,10 @@ fn web_router_rejects_unknown_graph_scoped_health_configuration_at_construction(
             checks: vec!["unknown-private-value".to_owned()],
             ..scafra::HealthConfig::default()
         },
+        security: scafra::ActuatorSecurity {
+            enabled: true,
+            bearer_token: Some("do-not-leak-this-token".to_owned()),
+        },
         ..ActuatorConfig::all()
     };
     let error =
@@ -70,5 +74,6 @@ fn web_router_rejects_unknown_graph_scoped_health_configuration_at_construction(
             .expect_err("unknown graph-scoped check should prevent router construction");
     let message = error.to_string();
     assert!(message.contains("unknown check name"));
-    assert!(!message.contains("unknown-private-value"));
+    assert!(message.contains("unknown-private-value"));
+    assert!(!message.contains("do-not-leak-this-token"));
 }

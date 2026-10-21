@@ -23,11 +23,13 @@
 //! [`HealthRegistry::register`] accepts graph-owned asynchronous checks. Names
 //! must be non-empty and unique within one registry; duplicate names are
 //! rejected at registration. Graph-scoped router construction rejects unknown
-//! selected names, including unknown names listed alongside `*`. An empty
-//! selection or `*` selects every check; an empty registry is healthy.
-//! Registries are validated and moved into the router at construction, so
-//! registrations cannot change during serving and separate routers do not
-//! share graph-owned health state.
+//! selected names, including unknown names listed alongside `*`. The fallible
+//! [`try_router`] validates process-wide legacy registrations during
+//! construction. The infallible [`router`] remains for compatibility and
+//! reports `DOWN` for invalid selections. An empty selection or `*` selects
+//! every check; an empty registry is healthy. Registries are validated and
+//! moved into the router at construction, so registrations cannot change
+//! during serving and separate routers do not share graph-owned health state.
 //!
 //! Checks run sequentially and each receives its own timeout. A check that
 //! returns `false`, times out, or unwinds while its future is created or polled
@@ -70,7 +72,7 @@ pub use config::{ActuatorConfig, ActuatorSecurity, EndpointSelection, HealthConf
 pub use health::HealthCheckFuture;
 pub use registry::HealthCheckRegistration;
 pub use registry::{HealthRegistry, HealthRegistryError};
-pub use routing::{reserved_routes, router, router_with_health_registry};
+pub use routing::{reserved_routes, router, router_with_health_registry, try_router};
 
 pub use inventory;
 

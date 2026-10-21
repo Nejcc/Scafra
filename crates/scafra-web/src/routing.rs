@@ -74,7 +74,7 @@ pub(crate) fn build_router_with_timeout(
     security: &scafra_security::SecurityConfig,
     request_timeout: Option<Duration>,
 ) -> Result<Router, WebError> {
-    let router = scafra_actuator::router(actuator);
+    let router = scafra_actuator::try_router(actuator)?;
     build_router_with_actuator_router(router, actuator, security, request_timeout)
 }
 

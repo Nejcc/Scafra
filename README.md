@@ -270,10 +270,24 @@ using `router_with_health_registry` or the generated graph method.
 An empty `actuator.health.checks` list selects all checks in that router's
 registry; `*` also selects all checks. An empty registry has no dependency
 checks and reports `UP`. A configured unknown name is rejected during
-graph-scoped router construction. The legacy constructor cannot return a
-construction error, so it reports `DOWN` for an unknown selection. Unknown
-names are not included in diagnostics. With `*`, any additional configured
-names are still validated and must exist.
+graph-scoped router construction. Scafra's standard web builder and generated
+application graph also validate legacy `register_health_check!` names before
+serving. Call `scafra::actuator::try_router` when building a legacy router
+directly. The source-compatible `router` constructor cannot return a
+construction error, so it reports `DOWN` for an unknown selection. Startup
+diagnostics identify `actuator.health.checks` and list the unknown
+identifiers, without including actuator credentials. With `*`, any additional
+configured names are still validated and must exist. Repeated configured names
+are treated as a selection set and do not run a check more than once; duplicate
+registry names are rejected. Duplicate process-wide
+`register_health_check!` names are also rejected by fallible startup
+validation; the compatibility `router` fails closed for such a registry.
+
+The check-name validation uses the effective `ScafraConfig` passed to router
+construction, after base configuration, the selected profile, and environment
+overrides have been merged. Generated applications validate after graph
+providers initialize and before the server binds; if this fails, their
+application-owned async resources follow the normal startup cleanup path.
 
 Checks may perform asynchronous I/O and return `false` when a dependency is
 unhealthy. They must not block synchronously while being polled. Each selected

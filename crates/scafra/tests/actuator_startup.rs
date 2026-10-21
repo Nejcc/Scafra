@@ -1,7 +1,33 @@
 use std::sync::atomic::{AtomicBool, Ordering};
+use tokio::sync::Mutex;
+
+static ENVIRONMENT_LOCK: Mutex<()> = Mutex::const_new(());
+
+#[tokio::test]
+async fn unknown_readiness_name_stops_application_startup_before_serving() {
+    let _environment_lock = ENVIRONMENT_LOCK.lock().await;
+    let _profile = EnvironmentOverride::set("SCAFRA_PROFILE", "default");
+
+    let result = scafra::run_with_router(|config| {
+        let actuator = scafra::ActuatorConfig {
+            health: scafra::HealthConfig {
+                checks: vec!["misspelled-database".to_owned()],
+                ..scafra::HealthConfig::default()
+            },
+            ..config.actuator.clone()
+        };
+        scafra::web::build_router_with_actuator(&actuator).map_err(scafra::StartupError::from)
+    })
+    .await;
+
+    let error = result.expect_err("unknown configured checks must stop application startup");
+    assert_eq!(error.kind(), "web");
+    assert!(error.to_string().contains("misspelled-database"));
+}
 
 #[tokio::test]
 async fn invalid_security_stops_startup_before_router_construction() {
+    let _environment_lock = ENVIRONMENT_LOCK.lock().await;
     const BASIC_PASSWORD_SENTINEL: &str = "issue92-startup-basic-password-sentinel";
 
     let _profile = EnvironmentOverride::set("SCAFRA_PROFILE", "default");
@@ -69,6 +95,46 @@ async fn invalid_security_stops_startup_before_router_construction() {
             "the router must not be built after application bearer validation fails"
         );
     }
+}
+
+#[tokio::test]
+async fn readiness_names_are_validated_against_profile_and_environment_merged_config() {
+    let _environment_lock = ENVIRONMENT_LOCK.lock().await;
+    let root = std::env::temp_dir().join(format!(
+        "scafra-readiness-config-test-{}",
+        std::process::id()
+    ));
+    let resources = root.join("src/resources");
+    std::fs::create_dir_all(&resources).expect("the temporary config root should be created");
+    std::fs::write(
+        resources.join("application.yaml"),
+        "scafra:\n  profiles:\n    active: probe\nactuator:\n  health:\n    checks: [base-check]\n",
+    )
+    .expect("base configuration should be written");
+    std::fs::write(
+        resources.join("application-probe.yaml"),
+        "actuator:\n  health:\n    checks: [profile-check]\n",
+    )
+    .expect("profile configuration should be written");
+
+    let profile_config = scafra::ConfigLoader::new()
+        .root(&root)
+        .load_validated::<scafra::ScafraConfig>()
+        .expect("the merged profile config should pass typed validation");
+    assert_eq!(profile_config.actuator.health.checks, ["profile-check"]);
+    assert!(scafra::actuator::try_router(&profile_config.actuator).is_err());
+
+    let _health_timeout =
+        EnvironmentOverride::set("SCAFRA_ACTUATOR_HEALTH_CHECK_TIMEOUT_MS", "250");
+    let environment_config = scafra::ConfigLoader::new()
+        .root(&root)
+        .load_validated::<scafra::ScafraConfig>()
+        .expect("environment overrides should preserve typed config validity");
+    assert_eq!(environment_config.actuator.health.checks, ["profile-check"]);
+    assert_eq!(environment_config.actuator.health.check_timeout_ms, 250);
+    assert!(scafra::actuator::try_router(&environment_config.actuator).is_err());
+
+    std::fs::remove_dir_all(root).expect("the temporary config root should be removed");
 }
 
 struct EnvironmentOverride {

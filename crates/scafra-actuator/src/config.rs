@@ -33,9 +33,9 @@ pub struct ActuatorConfig {
 ///
 /// An empty `checks` list selects every check in the router's registry. A
 /// `*` entry also selects every check. Unknown selected names are rejected by
-/// graph-scoped router construction; the legacy [`crate::router`] reports
-/// `DOWN` for an unknown selection. Each selected check runs sequentially and
-/// receives its own timeout.
+/// graph-scoped router construction and [`crate::try_router`]; the legacy
+/// [`crate::router`] reports `DOWN` for an unknown selection. Each selected
+/// check runs sequentially and receives its own timeout.
 #[derive(Debug, Clone, Deserialize, Serialize)]
 pub struct HealthConfig {
     #[serde(default)]
