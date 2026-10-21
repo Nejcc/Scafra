@@ -263,7 +263,7 @@ fn parse_bean_node(
     }
     let output_type = resolve_type_path(&output, type_paths).ok_or_else(|| {
         format!(
-            "Scafra graph bean `{}` at {source} must return a public concrete type declared in application source",
+            "Scafra graph bean `{}` at {source} must return a public application-owned resource struct; wrap third-party output types such as `{output}` in a local newtype",
             item.sig.ident
         )
     })?;
@@ -413,11 +413,34 @@ fn bean_output(return_type: &ReturnType) -> Result<(String, bool), String> {
                 if types.len() != 2 || arguments.args.len() != 2 {
                     return Err("fallible graph beans must return Result<Output, Error>".to_owned());
                 }
-                return Ok((dependency_name(types[0])?, true));
+                return Ok((bean_output_name(types[0])?, true));
             }
         }
     }
-    Ok((dependency_name(ty)?, false))
+    Ok((bean_output_name(ty)?, false))
+}
+
+fn bean_output_name(ty: &Type) -> Result<String, String> {
+    let Type::Path(path) = ty else {
+        return Err(format!(
+            "bean provider output `{ty:?}` must be a public application-owned resource struct; wrap third-party resource types in a local newtype"
+        ));
+    };
+    if path.qself.is_some() {
+        return Err("bean provider outputs must be public application-owned resource structs; wrap third-party resource types in a local newtype".to_owned());
+    }
+    if path.path.leading_colon.is_some() || path.path.segments.len() != 1 {
+        return Err("qualified bean provider outputs are not supported; wrap third-party resource types in a public application-owned newtype".to_owned());
+    }
+    let Some(segment) = path.path.segments.last() else {
+        return Err("bean provider output must name a concrete resource type".to_owned());
+    };
+    if !matches!(segment.arguments, PathArguments::None) {
+        return Err(format!(
+            "generic bean provider output `{ty:?}` is not supported; wrap third-party resource types in a public application-owned newtype"
+        ));
+    }
+    Ok(segment.ident.to_string())
 }
 
 fn resolve_type_path(

@@ -73,6 +73,12 @@ compose the graph during startup, so injected dependencies do not need
 dependency is diagnosed at compile time rather than through a late runtime
 lookup.
 
+Bean provider arguments are graph dependencies and are passed from the single
+constructed value for each output. Provider outputs must be public structs in
+application source; third-party clients and pools are returned through
+application-owned newtypes. The bean macro does not synthesize `Default` or
+`Bean` implementations for provider outputs.
+
 The standard path uses static route descriptors. Scafra does not use runtime
 filesystem scanning, reflection, or a global service locator. The separate
 `scafra_build::discover_graph` API remains available when an application owns a

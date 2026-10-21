@@ -153,7 +153,7 @@ Set `ASYNC_RESOURCE_EXAMPLE_FAIL_CLEANUP=client` to demonstrate cleanup-error
 reporting. `ASYNC_RESOURCE_EXAMPLE_IGNORE_WORKER_CANCELLATION=true` exercises
 the example worker's declared timeout and abort behavior.
 
-## Compatibility and issue #74
+## Provider outputs and external resource types
 
 Synchronous `compose()` and `compose_with()` remain available for graphs with
 only synchronous providers. Existing `run_with_router`, lifecycle hooks,
@@ -161,7 +161,28 @@ synchronous providers, services, and controllers keep their signatures. The
 standard generated main path now uses `compose_async()` and retains resources
 through the server lifetime.
 
-The bean macro still has the broader external-output and generated-`Default`
-design question tracked by [issue #74](https://github.com/Scafra/Scafra/issues/74).
-Use an application-owned newtype for external pool/client types. This issue
-does not change the synchronous bean macro's existing `Default` behavior.
+Bean provider outputs must be public application-owned structs. For a
+third-party pool or client, define a local newtype and return it from the
+provider. This is required for async resources because the application must
+implement `AsyncResource` on the type it owns; it also lets the generated
+graph name the output without runtime type lookup. Direct foreign output types
+receive a build diagnostic that points to the wrapper pattern.
+
+Provider arguments are supplied from the generated typed graph. Scafra does
+not call a provider with `Default::default()` arguments and does not generate a
+`Default` implementation for the output. Add an explicit `Default` derive or
+implementation when application code needs one.
+
+The graph does not use the `Bean` marker to compose providers. The macro no
+longer generates `Bean` implementations for provider outputs; applications
+using `T: Bean` as their own bound can implement it on local types. This avoids
+an orphan-rule failure for third-party aliases before graph validation can
+report the supported wrapper contract. See the
+[typed dependency graph guide](dependency-graph.md) for provider signatures
+and dependency rules.
+
+This contract is driver-neutral and adds no SQLx dependency to Scafra core.
+The SQLite example demonstrates async setup and teardown. PostgreSQL-specific
+configuration, pool policy, and real-server tests remain in
+[issue #46](https://github.com/Scafra/Scafra/issues/46); that integration can
+use the same local-wrapper provider contract.

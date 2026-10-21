@@ -156,7 +156,11 @@ async fn main() {}
 composes services, beans, and controllers through the typed graph before
 starting the server. Components do not need 'Default' for constructor
 injection; add '#[derive(Default)]' when direct default construction is needed.
-'#[bean]' turns a concrete provider function into a typed provider, and
+'#[bean]' turns a public provider function into a typed provider. Its arguments
+come from the graph, so provider dependencies need no 'Default' implementation.
+Outputs are public application structs; wrap third-party clients and pools in
+a local newtype. The macro does not generate 'Default' or the optional 'Bean'
+marker for provider outputs.
 '#[routes]' generates ordinary Axum handler adapters. Applications can still
 use 'scafra_build::discover_graph' for an application-owned build pipeline;
 see the [typed graph guide](docs/guides/dependency-graph.md). Runtime

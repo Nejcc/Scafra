@@ -1,0 +1,13 @@
+[package]
+name = "scafra-graph-foreign-output-fixture"
+version = "0.1.0"
+edition = "2021"
+publish = false
+
+[workspace]
+
+[dependencies]
+scafra = { path = "../../../../scafra" }
+
+[build-dependencies]
+scafra-build = { path = "../../../../scafra-build" }

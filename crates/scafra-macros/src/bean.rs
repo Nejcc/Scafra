@@ -14,25 +14,20 @@ pub(crate) fn expand_bean(
         ));
     }
     let input = syn::parse::<ItemFn>(item)?;
-    let asynchronous = input.sig.asyncness.is_some();
     if !input.sig.generics.params.is_empty() {
         return Err(Error::new_spanned(
             &input.sig,
             "bean providers currently require non-generic functions",
         ));
     }
-    let default_arguments = input
-        .sig
-        .inputs
-        .iter()
-        .map(|argument| match argument {
-            FnArg::Typed(_) => Ok(quote!(::std::default::Default::default())),
-            FnArg::Receiver(receiver) => Err(Error::new_spanned(
+    for argument in &input.sig.inputs {
+        if let FnArg::Receiver(receiver) = argument {
+            return Err(Error::new_spanned(
                 receiver,
                 "bean providers cannot have a self receiver",
-            )),
-        })
-        .collect::<Result<Vec<_>>>()?;
+            ));
+        }
+    }
     let return_type = match &input.sig.output {
         ReturnType::Type(_, ty) => ty,
         ReturnType::Default => {
@@ -42,7 +37,7 @@ pub(crate) fn expand_bean(
             ))
         }
     };
-    let (bean_output, fallible) = bean_output_type(return_type)?;
+    let bean_output = bean_output_type(return_type)?;
     if matches!(bean_output, Type::Reference(_) | Type::ImplTrait(_)) {
         return Err(Error::new_spanned(
             bean_output,
@@ -50,23 +45,8 @@ pub(crate) fn expand_bean(
         ));
     }
     let function = &input.sig.ident;
-    let default_impl = if fallible || asynchronous {
-        quote! {}
-    } else {
-        quote! {
-            impl ::std::default::Default for #bean_output {
-                fn default() -> Self {
-                    #function(#(#default_arguments),*)
-                }
-            }
-        }
-    };
     Ok(quote! {
         #input
-
-        #default_impl
-
-        impl ::scafra::core::Bean for #bean_output {}
 
         ::scafra::core::__private::inventory::submit! {
             ::scafra::core::ComponentRegistration {
@@ -77,7 +57,7 @@ pub(crate) fn expand_bean(
     })
 }
 
-fn bean_output_type(return_type: &Type) -> Result<(&Type, bool)> {
+fn bean_output_type(return_type: &Type) -> Result<&Type> {
     if let Type::Path(path) = return_type {
         if let Some(segment) = path.path.segments.last() {
             if segment.ident == "Result" {
@@ -87,14 +67,14 @@ fn bean_output_type(return_type: &Type) -> Result<(&Type, bool)> {
                         if matches!(types.next(), Some(syn::GenericArgument::Type(_)))
                             && arguments.args.len() == 2
                         {
-                            return Ok((output, true));
+                            return Ok(output);
                         }
                     }
                 }
             }
         }
     }
-    Ok((return_type, false))
+    Ok(return_type)
 }
 pub(crate) fn expand_post_processor(
     attr: TokenStream,

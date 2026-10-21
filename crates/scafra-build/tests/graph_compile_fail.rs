@@ -47,6 +47,11 @@ fn invalid_generated_graphs_fail_with_source_aware_diagnostics() {
             "src/service.rs:4",
         ),
         (
+            "foreign_output",
+            "must return a public application-owned resource struct",
+            "src/providers.rs:5",
+        ),
+        (
             "ambiguous",
             "ambiguous public graph type `Shared`",
             "src/first.rs:4",
